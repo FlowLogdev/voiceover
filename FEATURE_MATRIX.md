@@ -7,13 +7,13 @@ nothing is marked tested without an actual test run.
 | Area | Feature | Status | Notes |
 | --- | --- | --- | --- |
 | Foundation | Monorepo (pnpm/Turborepo), shared config | Implemented and tested | `pnpm install` + `turbo build` run clean |
-| Foundation | Prisma schema + seed script | Implemented awaiting external validation | `prisma validate`, `prisma format`, `prisma generate`, and `tsc --noEmit` all pass. Migration has **not** been applied against a live Postgres — Docker is not installed in this dev environment, so `prisma migrate dev` and the seed script are untested against a real database. |
-| Foundation | docker-compose (Postgres/Redis/MinIO) | Blocked by external dependency | Compose file written but unverified — `docker` is not installed/available in this environment. Needs Docker Desktop (or equivalent) installed to validate. |
+| Foundation | Prisma schema + seed script, synced via `prisma db push` against a real Postgres | Implemented and tested | Verified in CI (GitHub Actions) against a real `pgvector/pgvector:pg16` service container — schema pushes clean, migrations not yet committed (see note below). Still not run against Docker in this local dev environment (Docker isn't installed here). |
+| Foundation | docker-compose (Postgres/Redis/MinIO) | Blocked by external dependency, locally | Compose file written but unverified **in this sandbox** — `docker` isn't installed here. The equivalent Postgres service is verified working in CI; MinIO/Redis aren't exercised by CI yet. Needs Docker Desktop locally to validate the full compose stack. |
 | Auth | Password hashing (scrypt), session JWT issuance/verification | Implemented and tested | 9 unit tests in `packages/auth` pass (`pnpm --filter @voiceover/auth test`): correct/incorrect password, salt uniqueness, token round-trip, cross-secret rejection |
 | Auth | RBAC role comparison helpers | Implemented and tested | Unit tested in `packages/auth/src/rbac.test.ts` |
-| Auth | Email/password signup+login API routes, session cookie | Implemented awaiting external validation | `apps/api` unit tests (no DB) confirm health check, input validation (400), and auth-required (401) paths. Signup/login/tenant-isolation integration tests are written (`auth.integration.test.ts`) but have **not** been run against a live database in this environment (no Docker/Postgres available) — wired into CI against a real Postgres service, not yet executed there either since this hasn't been pushed |
+| Auth | Email/password signup+login API routes, session cookie | Implemented and tested | Unit tests (no DB) confirm health check, input validation (400), and auth-required (401) paths. `auth.integration.test.ts` (signup, wrong-password rejection, cross-tenant 403) now **passes in CI against a real Postgres service** — first real validation of the DB-backed path. Still not run against a live DB in this local sandbox (no Docker here). |
 | Auth | Google/Microsoft OAuth | Blocked by external dependency | Needs OAuth client IDs/secrets |
-| Auth | Tenant isolation (API-level, `forOrganization` scoping + 403 on cross-tenant access) | Implemented awaiting external validation | Code path exists and the integration test for it is written; unverified against a live DB for the same Docker reason above |
+| Auth | Tenant isolation (API-level, `forOrganization` scoping + 403 on cross-tenant access) | Implemented and tested | Covered by the same CI-passing integration test above: a user in org A gets 403 reading org B's meetings, 200 reading their own (empty) list. |
 | Dashboard | Web app shell (Next.js): home, signup, login, dashboard/meetings-list pages | Implemented awaiting external validation | `next build` succeeds, all pages prerender, `tsc --noEmit` passes, and a live smoke test confirms the dev server serves pages and the API's CORS config correctly allows credentialed cross-origin requests from it. The full signup→dashboard flow against a real backend is **not yet verified** (no live DB in this environment). |
 | Browser capture | Audio chunking/checksum, WAV header builder, IndexedDB chunk buffer, resumable-upload retry/backoff logic (`packages/audio`) | Implemented and tested | 14 unit tests pass headlessly (no browser needed — IndexedDB via `fake-indexeddb`): PCM conversion/clamping, checksum tamper detection, WAV header fields, chunk ordering, disconnect/reconnect replay, retry backoff |
 | Browser capture | Audio ingestion WebSocket (`/recording-tracks/:id/audio`): JSON chunk protocol, checksum verification, idempotent dedupe-by-sequence, ack/error replies | Implemented and tested | 3 integration tests in `apps/api` using a real `ws` client against a real listening server (in-memory chunk store, no DB needed for this protocol layer): rejects missing-cookie connections (4001), acks + dedupes a replayed chunk, rejects a tampered checksum |
@@ -43,3 +43,11 @@ nothing is marked tested without an actual test run.
   run recorded in that phase's PR/commit description.
 - Pricing in the master spec is explicitly a business hypothesis, not a validated margin
   — the admin cost dashboard (Phase 9) exists specifically to validate or correct it.
+- No real migration has been committed yet — `pnpm db:push` (schema sync, no migration
+  history) is used in CI in its place. Generate a real one with `pnpm db:migrate` once
+  Docker is available locally, then switch CI back to `pnpm db:migrate deploy`.
+- Turborepo defaults to strict env-var filtering between tasks (`envMode: "strict"`);
+  this repo sets `envMode: "loose"` in `turbo.json` so a task actually sees whatever
+  env vars the invoking shell has (CI's `DATABASE_URL`/`SESSION_SECRET` were silently
+  stripped before this was set, which took three failed CI runs to track down — see
+  git history around the "turbo's strict env mode" commit for the full story).
