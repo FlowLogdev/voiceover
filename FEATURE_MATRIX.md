@@ -46,6 +46,15 @@ nothing is marked tested without an actual test run.
 - No real migration has been committed yet — `pnpm db:push` (schema sync, no migration
   history) is used in CI in its place. Generate a real one with `pnpm db:migrate` once
   Docker is available locally, then switch CI back to `pnpm db:migrate deploy`.
+- Dependabot flagged 22 advisories after the first push; 21 are resolved (`zod` bumped
+  3→4, `vitest`/`vite`/`esbuild` bumped to current majors, `postcss`/`deepmerge-ts`
+  overridden via `pnpm-workspace.yaml`, each change re-verified against the full
+  typecheck/lint/build/test suite). One (`minimatch`, moderate, pulled in transitively
+  by eslint's own internals) is deliberately **not** overridden — minimatch@11 dropped
+  its CommonJS default export, which breaks eslint's own `require()` of it and takes
+  `eslint .` / `next build`'s lint step down with it. It's a lint-only, dev-time
+  dependency never shipped to production or exposed to untrusted input. Revisit once
+  eslint's dependency tree itself moves off the old minimatch major.
 - Turborepo defaults to strict env-var filtering between tasks (`envMode: "strict"`);
   this repo sets `envMode: "loose"` in `turbo.json` so a task actually sees whatever
   env vars the invoking shell has (CI's `DATABASE_URL`/`SESSION_SECRET` were silently

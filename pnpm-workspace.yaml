@@ -6,3 +6,16 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+minimumReleaseAgeExclude:
+  - vite@7.3.8
+overrides:
+  postcss: ^8.5.32
+  deepmerge-ts: ^8.0.2
+  # minimatch is NOT overridden here even though an older vulnerable copy
+  # (3.1.5, via eslint's own internals) remains: minimatch@11 dropped its
+  # CommonJS default export, which breaks eslint's internal `require()` of
+  # it ("does not provide an export named 'default'"), taking down both
+  # `eslint .` and `next build`'s lint step. It's a lint-only, dev-time
+  # transitive dependency never shipped to production or exposed to
+  # untrusted input — not worth trading a broken build for. Revisit once
+  # eslint's own dependency tree moves off the old minimatch major.
