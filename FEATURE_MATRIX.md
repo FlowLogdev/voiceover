@@ -21,9 +21,13 @@ nothing is marked tested without an actual test run.
 | Browser capture | Recording-session/track creation API (so a `recordingTrackId` is server-issued and tenant-owned, not client-generated) | Not implemented | Currently the extension mints its own UUID client-side and the ingestion WS doesn't check tenant/track ownership — flagged explicitly in code and the manual test plan. Needed before this is anything more than a local dev slice. |
 | Meeting bot | MeetingBotProvider interface | Not implemented | Phase 4 |
 | Meeting bot | Recall.ai-class adapter | Blocked by external dependency | Needs provider account + API validation |
-| Transcription | ASRProvider interface + test-double adapter | Not implemented | Phase 3 |
-| Transcription | Real streaming ASR (EN/ES/PT) | Blocked by external dependency | Needs provider selection + API key |
+| Transcription | VAD segmenter + `AsrProvider`/`AsrSession` interface + `TestDoubleAsrProvider` (`packages/transcription`) | Implemented and tested | 29 unit tests pass headlessly: RMS energy/speech classification, segment start/continue/end boundaries (including "brief pause doesn't split a segment"), deterministic partial→final event sequencing, per-session language reporting, finalize()-flushes-open-segment |
+| Transcription | Live `transcript.partial` / `transcript.final` / `language.detected` events over the recording-audio WebSocket | Implemented and tested | 2 new `apps/api` integration tests (loud audio → events arrive; silent audio → no events) pass against a real listening server; additionally **manually verified against the actually-running dev server** over a real TCP socket using the exact client protocol the web/extension use — ack, language.detected, and incrementing transcript.partial all arrived correctly and in order |
+| Transcription | Chrome extension popup renders the live transcript | Implemented awaiting external validation | Build/typecheck clean; relies on the same not-yet-run-in-a-real-browser caveat as the rest of the extension (see Browser capture row above) |
+| Transcription | `apps/web` `/recorder/[trackId]` manual-verification page | Implemented awaiting external validation | Builds, typechecks, server-renders correctly (checked directly). The Chrome browser automation extension was not connected in this environment, so nobody has actually clicked its buttons in a live browser tab — the identical WebSocket protocol was verified via a scripted client instead. |
+| Transcription | Real streaming ASR (EN/ES/PT) | Blocked by external dependency | Needs provider selection + API key — everything above is built against the interface so swapping in a real adapter shouldn't require touching call sites |
 | Transcription | Diarization/speaker attribution | Not implemented | Phase 5, depends on ASR provider capabilities |
+| Transcription | Persisting transcript segments to `TranscriptSegment` | Not implemented | Currently relayed live only, no DB write — needs a real `meetingId`, which doesn't exist until the recording-session/track creation endpoint (Phase 2 gap, see above) is built |
 | AI intelligence | Summaries/decisions/action items/risks | Blocked by external dependency | Needs LLM provider key |
 | AI intelligence | Ask VoiceOver (chat + semantic search) | Blocked by external dependency | Needs LLM provider key + pgvector |
 | Integrations | Google/Outlook Calendar | Blocked by external dependency | Needs OAuth credentials |
@@ -60,3 +64,10 @@ nothing is marked tested without an actual test run.
   env vars the invoking shell has (CI's `DATABASE_URL`/`SESSION_SECRET` were silently
   stripped before this was set, which took three failed CI runs to track down — see
   git history around the "turbo's strict env mode" commit for the full story).
+- Next.js's webpack build doesn't resolve the NodeNext-style `.js`-suffixed relative
+  imports our packages use (e.g. `export { x } from "./pcm.js"` pointing at `pcm.ts`) for
+  any *value*-level import from a workspace package — only type-only imports, which get
+  erased before bundling, worked by accident until `apps/web` needed a real runtime
+  import from `@voiceover/audio`. Fixed with a `resolve.extensionAlias` entry in
+  `apps/web/next.config.ts`; worth remembering if a new workspace package import into
+  `apps/web` ever produces a "Module not found: Can't resolve './something.js'" error.

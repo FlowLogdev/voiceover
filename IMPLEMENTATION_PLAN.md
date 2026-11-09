@@ -48,12 +48,39 @@ and testable, not just files on disk. Status is tracked honestly in `FEATURE_MAT
 - Explicitly out of scope here, not silently ignored: native Teams/Zoom **desktop app**
   audio (`tabCapture` only sees browser tabs) and real S3-compatible object storage.
 
-## Phase 3 — Streaming transcription
-- `packages/transcription`: `ASRProvider` interface; one real adapter once a provider is
-  selected and credentials are available (blocked until then — interface and a
-  deterministic test-double adapter ship now so downstream code can be built and tested).
-- VAD, language detection, partial/final transcript events over WebSocket.
-- Live transcript panel in extension side panel and in `apps/web` live recorder page.
+## Phase 3 — Streaming transcription — done, against a test double, not real ASR
+- `packages/transcription`: energy-based `VadSegmenter` (real segmentation logic, not a
+  stub) plus an `AsrProvider`/`AsrSession` interface and a `TestDoubleAsrProvider` that
+  runs real VAD over real audio but emits clearly-labeled placeholder text instead of
+  actual speech-to-text — no provider is selected/credentialed yet (ARCHITECTURE.md
+  section 5). **29 unit tests**, all passing, no network/browser required.
+- `apps/api`'s `/recording-tracks/:id/audio` WebSocket now runs each connection's audio
+  through one `AsrSession` and relays `transcript.partial` / `transcript.final` /
+  `language.detected` events live over the same socket (protocol extended in
+  `packages/types/recording-ws.ts`). **2 new integration tests** confirm loud audio
+  produces transcript events and silent audio produces none.
+- `apps/chrome-extension`: the offscreen document relays these events to the
+  background service worker, which keeps a capped rolling transcript buffer; the popup
+  renders it live (partial lines in italics, final lines solid). Build/typecheck clean.
+- `apps/web`: a `/recorder/[trackId]` page (linked from the dashboard) connects to the
+  same WebSocket and lets a human send synthetic speech/silence chunks and watch the
+  live transcript — a manual verification tool, not a real recording UI. Needed a
+  webpack `resolve.extensionAlias` fix in `next.config.ts` (NodeNext-style `.js` import
+  specifiers pointing at `.ts` files aren't resolved by webpack by default — this was
+  the first *value-level* cross-package import into the web bundle, so it hadn't
+  surfaced before).
+- **Manually verified against the actually-running dev servers** (not just the
+  in-process vitest harness): booted real `apps/api`/`apps/web` processes, generated a
+  valid session token, and drove the WebSocket protocol exactly as the browser page
+  does — confirmed ack, language.detected, and incrementing transcript.partial events
+  all arrive correctly in order. The Chrome browser automation extension was not
+  connected in this environment, so the page itself could not be driven interactively
+  by a real browser; the page does server-render correctly (checked directly) and the
+  identical protocol was exercised over a real socket, but nobody has clicked the
+  actual buttons in an actual browser tab yet.
+- No persistence yet: transcript segments are relayed live only, not written to
+  `TranscriptSegment` — that needs a real `meetingId`, which doesn't exist until the
+  recording-session/track creation endpoint (the Phase 2 gap) is built.
 
 ## Phase 4 — Meeting bot adapter
 - `MeetingBotProvider` interface; Recall.ai-class adapter implemented against current

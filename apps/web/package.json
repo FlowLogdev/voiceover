@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@voiceover/audio": "workspace:*",
     "@voiceover/types": "workspace:*",
     "next": "^15.1.0",
     "react": "^19.0.0",

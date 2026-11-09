@@ -18,6 +18,7 @@
     "@voiceover/audio": "workspace:*",
     "@voiceover/auth": "workspace:*",
     "@voiceover/database": "workspace:*",
+    "@voiceover/transcription": "workspace:*",
     "@voiceover/types": "workspace:*",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.0.1",

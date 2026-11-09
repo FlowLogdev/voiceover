@@ -49,6 +49,32 @@
         color: #f87171;
         font-size: 12px;
       }
+      #transcript {
+        margin-top: 12px;
+        max-height: 180px;
+        overflow-y: auto;
+        border-top: 1px solid #334155;
+        padding-top: 8px;
+      }
+      #transcript:empty::before {
+        content: "Live transcript will appear here once recording starts.";
+        color: #64748b;
+        font-style: italic;
+      }
+      .transcript-line {
+        margin-bottom: 6px;
+        line-height: 1.4;
+      }
+      .transcript-line.partial {
+        color: #94a3b8;
+        font-style: italic;
+      }
+      .transcript-line .lang {
+        font-size: 10px;
+        text-transform: uppercase;
+        color: #6366f1;
+        margin-right: 4px;
+      }
     </style>
   </head>
   <body>
@@ -60,6 +86,7 @@
       <button id="stop" disabled>Stop</button>
     </div>
     <div id="error"></div>
+    <div id="transcript"></div>
     <script type="module" src="popup.js"></script>
   </body>
 </html>

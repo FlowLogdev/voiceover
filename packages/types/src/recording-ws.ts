@@ -33,4 +33,38 @@ export const serverErrorMessageSchema = z.object({
 });
 export type ServerErrorMessage = z.infer<typeof serverErrorMessageSchema>;
 
-export type ServerMessage = ServerAckMessage | ServerErrorMessage;
+const transcriptEventFieldsSchema = {
+  segmentId: z.string(),
+  sourceTrack: z.string(),
+  startMs: z.number().int().nonnegative(),
+  endMs: z.number().int().nonnegative(),
+  text: z.string(),
+  languageCode: z.string(),
+};
+
+export const serverTranscriptPartialMessageSchema = z.object({
+  type: z.literal("transcript.partial"),
+  ...transcriptEventFieldsSchema,
+});
+export type ServerTranscriptPartialMessage = z.infer<typeof serverTranscriptPartialMessageSchema>;
+
+export const serverTranscriptFinalMessageSchema = z.object({
+  type: z.literal("transcript.final"),
+  ...transcriptEventFieldsSchema,
+});
+export type ServerTranscriptFinalMessage = z.infer<typeof serverTranscriptFinalMessageSchema>;
+
+export const serverLanguageDetectedMessageSchema = z.object({
+  type: z.literal("language.detected"),
+  sourceTrack: z.string(),
+  languageCode: z.string(),
+  confidence: z.number(),
+});
+export type ServerLanguageDetectedMessage = z.infer<typeof serverLanguageDetectedMessageSchema>;
+
+export type ServerMessage =
+  | ServerAckMessage
+  | ServerErrorMessage
+  | ServerTranscriptPartialMessage
+  | ServerTranscriptFinalMessage
+  | ServerLanguageDetectedMessage;

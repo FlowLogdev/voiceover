@@ -39,6 +39,9 @@ importers:
       '@voiceover/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@voiceover/transcription':
+        specifier: workspace:*
+        version: link:../../packages/transcription
       '@voiceover/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -101,6 +104,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@voiceover/audio':
+        specifier: workspace:*
+        version: link:../../packages/audio
       '@voiceover/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -214,6 +220,24 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  packages/transcription:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      '@voiceover/config':
+        specifier: workspace:*
+        version: link:../config
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.8
+        version: 7.3.8(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15)
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@22.20.5)(vite@7.3.8(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15))
 
   packages/types:
     dependencies:

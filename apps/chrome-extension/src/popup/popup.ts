@@ -5,6 +5,7 @@ const errorEl = document.getElementById("error") as HTMLDivElement;
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const pauseBtn = document.getElementById("pause") as HTMLButtonElement;
 const stopBtn = document.getElementById("stop") as HTMLButtonElement;
+const transcriptEl = document.getElementById("transcript") as HTMLDivElement;
 
 function send(request: PopupRequest): Promise<CaptureStatus> {
   return chrome.runtime.sendMessage(request);
@@ -47,6 +48,30 @@ function render(status: CaptureStatus) {
   pauseBtn.disabled = status.state !== "recording" && status.state !== "paused";
   pauseBtn.textContent = status.state === "paused" ? "Resume" : "Pause";
   stopBtn.disabled = status.state === "idle";
+
+  renderTranscript(status.transcriptLines);
+}
+
+function renderTranscript(lines: CaptureStatus["transcriptLines"]) {
+  const wasScrolledToBottom =
+    transcriptEl.scrollHeight - transcriptEl.scrollTop <= transcriptEl.clientHeight + 4;
+
+  transcriptEl.replaceChildren(
+    ...lines.map((line) => {
+      const el = document.createElement("div");
+      el.className = `transcript-line${line.isFinal ? "" : " partial"}`;
+      const lang = document.createElement("span");
+      lang.className = "lang";
+      lang.textContent = line.languageCode;
+      el.appendChild(lang);
+      el.appendChild(document.createTextNode(line.text));
+      return el;
+    }),
+  );
+
+  if (wasScrolledToBottom) {
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
 }
 
 startBtn.addEventListener("click", () => void send({ type: "start" }).then(render));

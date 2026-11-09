@@ -1,6 +1,8 @@
 import { buildChunkFrame, ChunkBuffer, ResumableUploader } from "@voiceover/audio";
-import type { CaptureStatus, OffscreenCommand, OffscreenEvent } from "../shared/messages.js";
+import type { CaptureStatus, OffscreenCommand, OffscreenEvent, TranscriptLine } from "../shared/messages.js";
 import { WebSocketTransport } from "./websocket-transport.js";
+
+type BaseStatus = Omit<CaptureStatus, "transcriptLines">;
 
 const WORKLET_URL = chrome.runtime.getURL("worklet.js");
 
@@ -14,8 +16,13 @@ let sequenceNumber = 0;
 let elapsedMs = 0;
 let paused = false;
 
-function reportStatus(status: CaptureStatus) {
+function reportStatus(status: BaseStatus) {
   const event: OffscreenEvent = { type: "offscreen-status", status };
+  void chrome.runtime.sendMessage(event);
+}
+
+function reportTranscriptLine(line: TranscriptLine) {
+  const event: OffscreenEvent = { type: "transcript-line", line };
   void chrome.runtime.sendMessage(event);
 }
 
@@ -41,6 +48,16 @@ async function initCapture(streamId: string, recordingTrackId: string, wsUrl: st
 
   chunkBuffer = await ChunkBuffer.open(recordingTrackId);
   transport = new WebSocketTransport(wsUrl);
+  transport.onTranscriptMessage((message) => {
+    if (message.type === "transcript.partial" || message.type === "transcript.final") {
+      reportTranscriptLine({
+        segmentId: message.segmentId,
+        text: message.text,
+        languageCode: message.languageCode,
+        isFinal: message.type === "transcript.final",
+      });
+    }
+  });
   uploader = new ResumableUploader({ transport, buffer: chunkBuffer });
   sequenceNumber = 0;
   elapsedMs = 0;

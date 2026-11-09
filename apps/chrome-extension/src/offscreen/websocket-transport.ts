@@ -1,4 +1,5 @@
 import type { AudioChunkFrame, UploadTransport } from "@voiceover/audio";
+import type { ServerMessage } from "@voiceover/types";
 
 function bytesToBase64(bytes: Uint8Array): string {
   // Chunked to avoid blowing the call stack on `String.fromCharCode(...bytes)`
@@ -15,6 +16,7 @@ export class WebSocketTransport implements UploadTransport {
   private ws: WebSocket;
   private connected = false;
   private ackCallback: ((sequenceNumber: number) => void) | null = null;
+  private transcriptCallback: ((message: ServerMessage) => void) | null = null;
 
   constructor(url: string) {
     this.ws = new WebSocket(url);
@@ -25,19 +27,30 @@ export class WebSocketTransport implements UploadTransport {
       this.connected = false;
     });
     this.ws.addEventListener("message", (event) => {
+      let msg: ServerMessage;
       try {
-        const msg = JSON.parse(event.data as string) as { type: string; sequenceNumber?: number };
-        if (msg.type === "ack" && typeof msg.sequenceNumber === "number") {
-          this.ackCallback?.(msg.sequenceNumber);
-        }
+        msg = JSON.parse(event.data as string) as ServerMessage;
       } catch {
-        // ignore malformed server messages
+        return; // ignore malformed server messages
+      }
+      if (msg.type === "ack") {
+        this.ackCallback?.(msg.sequenceNumber);
+      } else if (
+        msg.type === "transcript.partial" ||
+        msg.type === "transcript.final" ||
+        msg.type === "language.detected"
+      ) {
+        this.transcriptCallback?.(msg);
       }
     });
   }
 
   isConnected(): boolean {
     return this.connected;
+  }
+
+  onTranscriptMessage(callback: (message: ServerMessage) => void): void {
+    this.transcriptCallback = callback;
   }
 
   async send(frame: AudioChunkFrame): Promise<void> {

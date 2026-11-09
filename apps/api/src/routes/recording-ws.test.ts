@@ -9,14 +9,14 @@ import { InMemoryChunkStore } from "../recording/chunk-store.js";
 
 const SESSION_SECRET = "ws-test-secret-at-least-this-long";
 
-function frameMessage(sequenceNumber: number) {
+function frameMessage(sequenceNumber: number, samples: Float32Array = new Float32Array(1600)) {
   const frame = buildChunkFrame({
     sequenceNumber,
     startMs: sequenceNumber * 100,
     endMs: (sequenceNumber + 1) * 100,
     sourceTrack: "remote_tab",
     sampleRate: 16000,
-    samples: new Float32Array(1600),
+    samples,
   });
   return {
     type: "chunk" as const,
@@ -28,6 +28,15 @@ function frameMessage(sequenceNumber: number) {
     checksum: frame.checksum,
     bytesBase64: Buffer.from(frame.bytes).toString("base64"),
   };
+}
+
+/** Loud enough to clear the ASR test double's default VAD speech threshold. */
+function loudSamples(length = 1600, amplitude = 0.8): Float32Array {
+  const samples = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    samples[i] = i % 2 === 0 ? amplitude : -amplitude;
+  }
+  return samples;
 }
 
 /**
@@ -120,6 +129,45 @@ describe("recording audio WebSocket ingestion", () => {
 
     expect(messages).toEqual([{ type: "error", message: "Checksum mismatch for sequence 1" }]);
     expect(chunkStore.sequencesFor("track-1")).toEqual([]);
+    ws.close();
+  });
+
+  it("relays live transcript events (test-double ASR) for audio loud enough to count as speech", async () => {
+    const ws = await connect();
+    const messages: ServerMessage[] = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    ws.send(JSON.stringify(frameMessage(0, loudSamples())));
+    await waitFor(
+      () => messages.some((m) => m.type === "transcript.partial"),
+    );
+
+    expect(messages).toContainEqual({ type: "ack", sequenceNumber: 0 });
+    expect(messages).toContainEqual(
+      expect.objectContaining({ type: "language.detected", sourceTrack: "remote_tab", languageCode: "en" }),
+    );
+    const partial = messages.find((m) => m.type === "transcript.partial");
+    expect(partial).toMatchObject({
+      type: "transcript.partial",
+      sourceTrack: "remote_tab",
+      startMs: 0,
+      languageCode: "en",
+    });
+    expect((partial as { text: string }).text).toContain("test-double transcript");
+    ws.close();
+  });
+
+  it("does not emit any transcript events for silent audio", async () => {
+    const ws = await connect();
+    const messages: ServerMessage[] = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+
+    ws.send(JSON.stringify(frameMessage(0))); // default all-zero (silent) samples
+    await waitFor(() => messages.length >= 1);
+    // Give any (incorrect) async transcript event a moment to arrive, if it were going to.
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(messages).toEqual([{ type: "ack", sequenceNumber: 0 }]);
     ws.close();
   });
 });

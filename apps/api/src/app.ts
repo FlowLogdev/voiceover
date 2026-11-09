@@ -3,6 +3,7 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import type { ZodIssue } from "zod";
+import { TestDoubleAsrProvider, type AsrProvider } from "@voiceover/transcription";
 import { authContextPlugin } from "./plugins/auth-context.js";
 import { authRoutes } from "./routes/auth.js";
 import { meetingRoutes } from "./routes/meetings.js";
@@ -28,11 +29,16 @@ function isZodError(error: unknown): error is { name: "ZodError"; issues: ZodIss
 
 export interface BuildAppOptions {
   chunkStore?: ChunkStore;
+  asrProvider?: AsrProvider;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: true });
   const chunkStore = options.chunkStore ?? new PrismaFileChunkStore(env.AUDIO_STORAGE_DIR);
+  // No real streaming ASR provider is selected/provisioned yet (see
+  // ARCHITECTURE.md section 5) — this is a deterministic test double, not
+  // real transcription. Swap behind the same AsrProvider interface once one is.
+  const asrProvider = options.asrProvider ?? new TestDoubleAsrProvider();
 
   await app.register(cors, { origin: env.APP_URL, credentials: true });
   await app.register(cookie);
@@ -59,7 +65,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   await app.register(authRoutes);
   await app.register(meetingRoutes);
-  await app.register(recordingWsRoutes, { chunkStore });
+  await app.register(recordingWsRoutes, { chunkStore, asrProvider });
 
   return app;
 }

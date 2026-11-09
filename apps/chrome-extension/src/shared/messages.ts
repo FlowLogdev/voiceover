@@ -1,9 +1,17 @@
 export type CaptureState = "idle" | "starting" | "recording" | "paused" | "stopping" | "error";
 
+export interface TranscriptLine {
+  segmentId: string;
+  text: string;
+  languageCode: string;
+  isFinal: boolean;
+}
+
 export interface CaptureStatus {
   state: CaptureState;
   startedAt: number | null;
   error?: string;
+  transcriptLines: TranscriptLine[];
 }
 
 // popup -> background
@@ -24,7 +32,9 @@ export type OffscreenCommand =
   | { type: "stop-capture" };
 
 // offscreen -> background
-export type OffscreenEvent = { type: "offscreen-status"; status: CaptureStatus };
+export type OffscreenEvent =
+  | { type: "offscreen-status"; status: Omit<CaptureStatus, "transcriptLines"> }
+  | { type: "transcript-line"; line: TranscriptLine };
 
 export const API_BASE_URL = "http://localhost:4000";
 export const WS_BASE_URL = "ws://localhost:4000";
