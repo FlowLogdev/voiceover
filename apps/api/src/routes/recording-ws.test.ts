@@ -30,6 +30,23 @@ function frameMessage(sequenceNumber: number) {
   };
 }
 
+/**
+ * Polls instead of a fixed sleep: the auth-context preHandler hook now does a
+ * real DB round trip for any request with a session cookie (see
+ * auth-context.ts), so a fixed short sleep that's fine on a fast local
+ * machine can be too tight on a loaded CI runner. Polls up to `timeoutMs`
+ * rather than guessing a constant that happens to work in one environment.
+ */
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 describe("recording audio WebSocket ingestion", () => {
   let app: FastifyInstance;
   let chunkStore: InMemoryChunkStore;
@@ -79,9 +96,9 @@ describe("recording audio WebSocket ingestion", () => {
     ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
 
     ws.send(JSON.stringify(frameMessage(0)));
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => messages.length >= 1);
     ws.send(JSON.stringify(frameMessage(0))); // simulate retry/replay of the same chunk
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => messages.length >= 2);
 
     expect(messages).toEqual([
       { type: "ack", sequenceNumber: 0 },
@@ -99,7 +116,7 @@ describe("recording audio WebSocket ingestion", () => {
     const msg = frameMessage(1);
     msg.checksum = "deadbeef";
     ws.send(JSON.stringify(msg));
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => messages.length >= 1);
 
     expect(messages).toEqual([{ type: "error", message: "Checksum mismatch for sequence 1" }]);
     expect(chunkStore.sequencesFor("track-1")).toEqual([]);
