@@ -1,0 +1,713 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector, uuidOssp(map: "uuid-ossp")]
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+}
+
+enum SubscriptionTier {
+  FREE
+  PRO
+  BUSINESS
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+  INCOMPLETE
+}
+
+enum RecordingMethod {
+  BROWSER
+  BOT
+}
+
+enum RecordingSessionStatus {
+  PENDING
+  RECORDING
+  PAUSED
+  STOPPING
+  FINALIZING
+  COMPLETE
+  FAILED
+  CANCELED
+}
+
+enum BotJoinStatus {
+  SCHEDULED
+  JOINING
+  IN_CALL
+  ADMISSION_REJECTED
+  LEFT
+  FAILED
+}
+
+enum ProcessingJobType {
+  ASR
+  DIARIZATION
+  ANALYSIS
+  EMBEDDING
+  EXPORT
+  FINALIZATION
+}
+
+enum ProcessingJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  RETRYING
+}
+
+enum IntegrationProvider {
+  GOOGLE_CALENDAR
+  MICROSOFT_CALENDAR
+  ZOOM
+  TEAMS
+  GOOGLE_MEET
+  SLACK
+  WEBHOOK
+}
+
+enum CommentTargetType {
+  MEETING
+  TRANSCRIPT_SEGMENT
+  ACTION_ITEM
+}
+
+enum ShareTargetType {
+  MEETING
+  ORGANIZATION
+}
+
+enum AuditAction {
+  RECORDING_STARTED
+  RECORDING_STOPPED
+  BOT_INVITED
+  BOT_LEFT
+  MEETING_EXPORTED
+  MEETING_SHARED
+  MEETING_DELETED
+  BILLING_PLAN_CHANGED
+  CONSENT_GRANTED
+  CONSENT_REVOKED
+}
+
+// ---------------------------------------------------------------------------
+// Identity, tenancy, billing
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String?
+  avatarUrl     String?
+  passwordHash  String?
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  memberships         Membership[]
+  meetingsHosted      Meeting[]            @relation("MeetingHost")
+  recordingConsents   RecordingConsent[]
+  comments            Comment[]
+  bookmarks           Bookmark[]
+  chatMessages        ChatMessage[]
+  auditLogs           AuditLog[]
+  calendarConnections CalendarConnection[]
+
+  @@map("users")
+}
+
+model Organization {
+  id        String    @id @default(uuid())
+  name      String
+  slug      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  memberships   Membership[]
+  workspaces    Workspace[]
+  meetings      Meeting[]
+  integrations  Integration[]
+  subscription  Subscription?
+  usageRecords  UsageRecord[]
+  providerCosts ProviderCost[]
+  auditLogs     AuditLog[]
+  shares        Share[]
+
+  @@map("organizations")
+}
+
+model Membership {
+  id             String         @id @default(uuid())
+  organizationId String
+  userId         String
+  role           MembershipRole @default(MEMBER)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Workspace {
+  id             String    @id @default(uuid())
+  organizationId String
+  name           String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meetings     Meeting[]
+
+  @@index([organizationId])
+  @@map("workspaces")
+}
+
+// ---------------------------------------------------------------------------
+// Meetings and recording pipeline
+// ---------------------------------------------------------------------------
+
+model Meeting {
+  id              String           @id @default(uuid())
+  organizationId  String
+  workspaceId     String?
+  hostUserId      String
+  title           String
+  platform        String? // "google_meet" | "teams" | "zoom" | "other"
+  scheduledStart  DateTime?
+  scheduledEnd    DateTime?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  recordingMethod RecordingMethod?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  deletedAt       DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id])
+  host         User         @relation("MeetingHost", fields: [hostUserId], references: [id])
+
+  participants       Participant[]
+  recordingSessions  RecordingSession[]
+  speakers           Speaker[]
+  transcriptSegments TranscriptSegment[]
+  languageSegments   LanguageSegment[]
+  summaries          Summary[]
+  decisions          Decision[]
+  actionItems        ActionItem[]
+  questions          Question[]
+  risks              Risk[]
+  commitments        Commitment[]
+  topics             Topic[]
+  shares             Share[]
+  comments           Comment[]
+  bookmarks          Bookmark[]
+  chatMessages       ChatMessage[]
+  embeddings         Embedding[]
+  recordingConsents  RecordingConsent[]
+  processingJobs     ProcessingJob[]
+
+  @@index([organizationId])
+  @@index([workspaceId])
+  @@map("meetings")
+}
+
+model Participant {
+  id          String    @id @default(uuid())
+  meetingId   String
+  displayName String
+  email       String?
+  isHost      Boolean   @default(false)
+  joinedAt    DateTime?
+  leftAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("participants")
+}
+
+model RecordingConsent {
+  id        String    @id @default(uuid())
+  meetingId String
+  userId    String?
+  granted   Boolean
+  grantedAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@index([meetingId])
+  @@map("recording_consents")
+}
+
+model RecordingSession {
+  id            String                 @id @default(uuid())
+  meetingId     String
+  method        RecordingMethod
+  status        RecordingSessionStatus @default(PENDING)
+  botProvider   String?
+  botJoinStatus BotJoinStatus?
+  startedAt     DateTime?
+  pausedAt      DateTime?
+  endedAt       DateTime?
+  failureReason String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  meeting Meeting          @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  tracks  RecordingTrack[]
+
+  @@index([meetingId])
+  @@map("recording_sessions")
+}
+
+model RecordingTrack {
+  id                 String   @id @default(uuid())
+  recordingSessionId String
+  sourceTrack        String // "local_mic" | "remote_tab" | "bot_mixed"
+  storagePrefix      String
+  durationMs         Int?
+  createdAt          DateTime @default(now())
+
+  recordingSession   RecordingSession    @relation(fields: [recordingSessionId], references: [id], onDelete: Cascade)
+  audioChunks        AudioChunk[]
+  transcriptSegments TranscriptSegment[] @relation("TrackSegments")
+
+  @@index([recordingSessionId])
+  @@map("recording_tracks")
+}
+
+model AudioChunk {
+  id               String    @id @default(uuid())
+  recordingTrackId String
+  sequenceNumber   Int
+  startMs          Int
+  endMs            Int
+  storageKey       String
+  byteSize         Int
+  checksum         String
+  acknowledgedAt   DateTime?
+  createdAt        DateTime  @default(now())
+
+  recordingTrack RecordingTrack @relation(fields: [recordingTrackId], references: [id], onDelete: Cascade)
+
+  @@unique([recordingTrackId, sequenceNumber])
+  @@index([recordingTrackId])
+  @@map("audio_chunks")
+}
+
+// ---------------------------------------------------------------------------
+// Transcript, speakers, language
+// ---------------------------------------------------------------------------
+
+model Speaker {
+  id            String   @id @default(uuid())
+  meetingId     String
+  label         String // "Speaker 1" by default, renameable
+  displayName   String?
+  participantId String?
+  createdAt     DateTime @default(now())
+
+  meeting            Meeting             @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  transcriptSegments TranscriptSegment[]
+
+  @@index([meetingId])
+  @@map("speakers")
+}
+
+model TranscriptSegment {
+  id               String   @id @default(uuid())
+  meetingId        String
+  speakerId        String?
+  sourceTrack      String
+  recordingTrackId String?
+  startMs          Int
+  endMs            Int
+  text             String
+  languageCode     String
+  confidence       Float?
+  isFinal          Boolean  @default(false)
+  provider         String
+  revisionNumber   Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  meeting        Meeting              @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  speaker        Speaker?             @relation(fields: [speakerId], references: [id])
+  recordingTrack RecordingTrack?      @relation("TrackSegments", fields: [recordingTrackId], references: [id])
+  revisions      TranscriptRevision[]
+
+  @@index([meetingId, startMs])
+  @@index([speakerId])
+  @@map("transcript_segments")
+}
+
+model TranscriptRevision {
+  id                  String   @id @default(uuid())
+  transcriptSegmentId String
+  previousText        String
+  revisionNumber      Int
+  editedByUserId      String?
+  createdAt           DateTime @default(now())
+
+  transcriptSegment TranscriptSegment @relation(fields: [transcriptSegmentId], references: [id], onDelete: Cascade)
+
+  @@index([transcriptSegmentId])
+  @@map("transcript_revisions")
+}
+
+model LanguageSegment {
+  id           String   @id @default(uuid())
+  meetingId    String
+  languageCode String
+  startMs      Int
+  endMs        Int
+  createdAt    DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId, startMs])
+  @@map("language_segments")
+}
+
+// ---------------------------------------------------------------------------
+// AI meeting intelligence
+// ---------------------------------------------------------------------------
+
+model Summary {
+  id          String   @id @default(uuid())
+  meetingId   String
+  kind        String // "executive" | "detailed_timeline"
+  content     String
+  modelName   String
+  generatedAt DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("summaries")
+}
+
+model Decision {
+  id              String   @id @default(uuid())
+  meetingId       String
+  text            String
+  sourceSegmentId String?
+  confidence      Float?
+  createdAt       DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("decisions")
+}
+
+model ActionItem {
+  id              String    @id @default(uuid())
+  meetingId       String
+  text            String
+  ownerName       String?
+  ownerUserId     String?
+  dueDate         DateTime?
+  isDone          Boolean   @default(false)
+  sourceSegmentId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  meeting  Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  comments Comment[]
+
+  @@index([meetingId])
+  @@map("action_items")
+}
+
+model Question {
+  id              String   @id @default(uuid())
+  meetingId       String
+  text            String
+  isResolved      Boolean  @default(false)
+  sourceSegmentId String?
+  createdAt       DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("questions")
+}
+
+model Risk {
+  id              String   @id @default(uuid())
+  meetingId       String
+  text            String
+  severity        String? // "low" | "medium" | "high"
+  sourceSegmentId String?
+  createdAt       DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("risks")
+}
+
+model Commitment {
+  id              String    @id @default(uuid())
+  meetingId       String
+  text            String
+  committedBy     String?
+  dueDate         DateTime?
+  isFulfilled     Boolean   @default(false)
+  sourceSegmentId String?
+  createdAt       DateTime  @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("commitments")
+}
+
+model Topic {
+  id        String   @id @default(uuid())
+  meetingId String
+  title     String
+  startMs   Int
+  endMs     Int
+  createdAt DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("topics")
+}
+
+model Embedding {
+  id              String                      @id @default(uuid())
+  meetingId       String
+  sourceSegmentId String?
+  content         String
+  embedding       Unsupported("vector(1536)")
+  createdAt       DateTime                    @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("embeddings")
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  meetingId String?
+  userId    String
+  role      String // "user" | "assistant"
+  content   String
+  citations Json?
+  createdAt DateTime @default(now())
+
+  meeting Meeting? @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id])
+
+  @@index([meetingId])
+  @@index([userId])
+  @@map("chat_messages")
+}
+
+// ---------------------------------------------------------------------------
+// Collaboration
+// ---------------------------------------------------------------------------
+
+model Share {
+  id             String          @id @default(uuid())
+  organizationId String
+  meetingId      String?
+  targetType     ShareTargetType
+  targetEmail    String?
+  canEdit        Boolean         @default(false)
+  expiresAt      DateTime?
+  createdAt      DateTime        @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meeting      Meeting?     @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([meetingId])
+  @@map("shares")
+}
+
+model Comment {
+  id           String            @id @default(uuid())
+  meetingId    String
+  actionItemId String?
+  userId       String
+  targetType   CommentTargetType
+  text         String
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  deletedAt    DateTime?
+
+  meeting    Meeting     @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  actionItem ActionItem? @relation(fields: [actionItemId], references: [id])
+  user       User        @relation(fields: [userId], references: [id])
+
+  @@index([meetingId])
+  @@map("comments")
+}
+
+model Bookmark {
+  id          String   @id @default(uuid())
+  meetingId   String
+  userId      String
+  timestampMs Int
+  label       String?
+  createdAt   DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([meetingId])
+  @@map("bookmarks")
+}
+
+// ---------------------------------------------------------------------------
+// Integrations, billing, ops
+// ---------------------------------------------------------------------------
+
+model Integration {
+  id                String              @id @default(uuid())
+  organizationId    String
+  provider          IntegrationProvider
+  config            Json
+  connectedByUserId String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  revokedAt         DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("integrations")
+}
+
+model CalendarConnection {
+  id           String    @id @default(uuid())
+  userId       String
+  provider     String // "google" | "microsoft"
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("calendar_connections")
+}
+
+model Subscription {
+  id                   String             @id @default(uuid())
+  organizationId       String             @unique
+  tier                 SubscriptionTier   @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  seats                Int                @default(1)
+  browserMinutesQuota  Int
+  botMinutesQuota      Int
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model UsageRecord {
+  id             String   @id @default(uuid())
+  organizationId String
+  meetingId      String?
+  kind           String // "browser_minutes" | "bot_minutes" | "llm_tokens" | "storage_bytes"
+  quantity       Float
+  occurredAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, kind])
+  @@map("usage_records")
+}
+
+model ProviderCost {
+  id             String   @id @default(uuid())
+  organizationId String
+  meetingId      String?
+  provider       String // "asr" | "llm" | "bot" | "storage" | "network"
+  amountUsd      Float
+  incurredAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, provider])
+  @@map("provider_costs")
+}
+
+model ProcessingJob {
+  id          String              @id @default(uuid())
+  meetingId   String
+  type        ProcessingJobType
+  status      ProcessingJobStatus @default(QUEUED)
+  attempts    Int                 @default(0)
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime            @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@map("processing_jobs")
+}
+
+model AuditLog {
+  id             String      @id @default(uuid())
+  organizationId String
+  userId         String?
+  action         AuditAction
+  metadata       Json?
+  createdAt      DateTime    @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@map("audit_logs")
+}

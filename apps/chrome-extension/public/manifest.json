@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "VoiceOver AI — Browser Capture",
+  "version": "0.1.0",
+  "description": "Record and live-transcribe meetings directly from the browser tab, with no bot required.",
+  "permissions": ["tabCapture", "offscreen", "storage"],
+  "host_permissions": ["http://localhost:4000/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "VoiceOver AI"
+  }
+}
+

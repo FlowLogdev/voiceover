@@ -1,0 +1,21 @@
+{
+  "name": "@voiceover/chrome-extension",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@voiceover/audio": "workspace:*",
+    "@voiceover/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@voiceover/config": "workspace:*",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  }
+}

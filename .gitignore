@@ -1,0 +1,16 @@
+node_modules/
+.turbo/
+dist/
+.next/
+out/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+.DS_Store
+.vercel
+.pnpm-store/
+*.tsbuildinfo
+packages/database/generated/
+infra/docker/volumes/

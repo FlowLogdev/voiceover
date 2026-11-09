@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>VoiceOver AI</title>
+    <style>
+      body {
+        width: 280px;
+        font: 13px system-ui, sans-serif;
+        margin: 0;
+        padding: 16px;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0 0 12px;
+      }
+      #status {
+        margin-bottom: 12px;
+        color: #94a3b8;
+      }
+      #status.recording {
+        color: #f87171;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        flex: 1;
+        padding: 8px;
+        border-radius: 6px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      button.primary {
+        background: #6366f1;
+        border-color: #6366f1;
+      }
+      #error {
+        margin-top: 10px;
+        color: #f87171;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>VoiceOver AI</h1>
+    <div id="status">Not recording</div>
+    <div class="row">
+      <button id="start" class="primary">Start</button>
+      <button id="pause" disabled>Pause</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
+    <div id="error"></div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

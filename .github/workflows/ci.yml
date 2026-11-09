@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: voiceover
+          POSTGRES_PASSWORD: voiceover
+          POSTGRES_DB: voiceover
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U voiceover"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://voiceover:voiceover@localhost:5432/voiceover
+      SESSION_SECRET: ci-only-secret-not-for-production-use
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      # No committed migration exists yet (see IMPLEMENTATION_PLAN.md) — `db push`
+      # syncs the schema directly. Switch to `pnpm db:migrate` once a real migration
+      # has been generated locally against Docker and committed.
+      - run: pnpm db:push
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm --filter @voiceover/api test:integration
