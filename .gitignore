@@ -14,3 +14,4 @@ coverage/
 *.tsbuildinfo
 packages/database/generated/
 infra/docker/volumes/
+.claude/
