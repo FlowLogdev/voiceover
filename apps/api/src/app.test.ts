@@ -28,4 +28,30 @@ describe("app (no database required)", () => {
     expect(response.statusCode).toBe(401);
     await app.close();
   });
+
+  it("requires authentication to invite or remove a meeting bot", async () => {
+    const app = await buildApp();
+    const orgId = "00000000-0000-4000-8000-000000000001";
+    const invite = await app.inject({
+      method: "POST",
+      url: `/organizations/${orgId}/meetings/00000000-0000-4000-8000-000000000002/bot-sessions`,
+      payload: { meetingUrl: "https://meet.google.com/abc-defg-hij" },
+    });
+    expect(invite.statusCode).toBe(401);
+    const leave = await app.inject({
+      method: "POST",
+      url: `/organizations/${orgId}/bot-sessions/00000000-0000-4000-8000-000000000003/leave`,
+    });
+    expect(leave.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("refuses to start with a meeting bot provider that has no adapter", async () => {
+    process.env.MEETING_BOT_PROVIDER = "recall";
+    try {
+      await expect(buildApp()).rejects.toThrow('MEETING_BOT_PROVIDER="recall" has no adapter yet');
+    } finally {
+      delete process.env.MEETING_BOT_PROVIDER;
+    }
+  });
 });

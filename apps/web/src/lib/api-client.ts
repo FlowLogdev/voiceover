@@ -4,6 +4,8 @@ import type {
   SessionResponse,
   CreateMeetingRequest,
   MeetingSummaryDTO,
+  BotSessionDTO,
+  CreateBotSessionRequest,
 } from "@voiceover/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -22,7 +24,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    // Only declare a JSON body when there is one: Fastify rejects an empty
+    // body sent with Content-Type: application/json (400), which silently
+    // broke bodyless POSTs like logout and bot leave.
+    headers: { ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}), ...init?.headers },
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }));
@@ -50,5 +55,16 @@ export const api = {
     request<{ id: string }>(`/organizations/${organizationId}/meetings`, {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  listBotSessions: (organizationId: string, meetingId: string) =>
+    request<BotSessionDTO[]>(`/organizations/${organizationId}/meetings/${meetingId}/bot-sessions`),
+  inviteBot: (organizationId: string, meetingId: string, body: CreateBotSessionRequest) =>
+    request<BotSessionDTO>(`/organizations/${organizationId}/meetings/${meetingId}/bot-sessions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  removeBot: (organizationId: string, sessionId: string) =>
+    request<BotSessionDTO>(`/organizations/${organizationId}/bot-sessions/${sessionId}/leave`, {
+      method: "POST",
     }),
 };

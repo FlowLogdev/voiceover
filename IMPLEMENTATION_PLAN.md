@@ -82,11 +82,57 @@ and testable, not just files on disk. Status is tracked honestly in `FEATURE_MAT
   `TranscriptSegment` — that needs a real `meetingId`, which doesn't exist until the
   recording-session/track creation endpoint (the Phase 2 gap) is built.
 
-## Phase 4 — Meeting bot adapter
-- `MeetingBotProvider` interface; Recall.ai-class adapter implemented against current
-  published docs once an account/API key exists (blocked until then).
-- Bot status, admission failure/retry, scheduled join, leave-on-request.
-- Shares the same ingestion/transcript/storage pipeline as browser capture.
+## Phase 4 — Meeting bot adapter — done, against a test double, not a real bot provider
+- `packages/meeting-bot` (new): the provider-agnostic `MeetingBotProvider` contract,
+  plus everything that should behave identically whichever provider is plugged in:
+  - `parseMeetingUrl` — an allowlist (https only, no credentials/ports, exact
+    Zoom/Meet/Teams hosts and meeting-path shapes; lookalike hosts rejected), since a
+    bot provider will send a real headless browser to whatever URL it's handed.
+  - Bot lifecycle state machine (`SCHEDULED -> JOINING -> WAITING_ROOM -> IN_CALL ->
+    LEFT`, plus `ADMISSION_REJECTED` / `FAILED`) that refuses regressions, so duplicate
+    or out-of-order provider webhooks can't move a bot backwards.
+  - `AdmissionRetryPolicy` — exponential-backoff re-dispatch after the host doesn't
+    admit the bot, the meeting hasn't started, or the provider API errors; non-retryable
+    failures (e.g. meeting locked) fail immediately.
+  - `BotSessionManager` — scheduled join (timers chained in <=24.8-day steps: a plain
+    `setTimeout` beyond 2^31-1 ms fires *immediately*), retries, leave-on-request
+    (idempotent; a provider failure keeps the bot's status and surfaces as 502),
+    stale-bot event filtering after a retry, per-session serialisation of all
+    mutations, and `restore()` to re-arm timers/audio routing after a restart.
+  - `TestDoubleMeetingBotProvider` — simulates the provider-side lifecycle on timers
+    and emits clearly-synthetic square-wave audio while "in the call". **35 unit
+    tests** on a deterministic fake clock, no network needed.
+- One real race found and fixed while testing: a provider can deliver the first audio
+  frames in the same tick as (or before) the `in_call` event, which the manager applies
+  asynchronously — frame 0 was silently dropped. Pre-live frames are now held in a
+  bounded per-session buffer and replayed in order (or discarded if the bot never gets in).
+- `apps/api`: browser-capture ingestion extracted into a shared `TrackIngestion`
+  (checksum -> chunk store -> ASR -> transcript events) that the bot path uses verbatim,
+  plus an in-process `TranscriptBus`. Side fix: a replayed chunk (client retry after a
+  lost ack) is no longer fed to ASR twice. New routes: invite
+  (`POST /organizations/:org/meetings/:meeting/bot-sessions`, MEMBER+), list, get, and
+  leave; a read-only `/recording-tracks/:id/transcript` WebSocket with a
+  track -> meeting -> organization ownership check; `BOT_INVITED` / `BOT_LEFT` audit
+  entries (including provider-initiated exits). Prisma: bot columns on
+  `RecordingSession`, `WAITING_ROOM` added to `BotJoinStatus`. Setting
+  `MEETING_BOT_PROVIDER` to anything other than `test-double` fails startup loudly
+  instead of silently simulating. **6 new API unit tests** (incl. a no-DB
+  bot -> pipeline -> transcript run) and **4 DB-backed integration tests** (CI only).
+- `apps/web`: create a meeting from the dashboard; `/meetings/[id]` sends, schedules
+  and removes a bot, polls its status, and shows the live transcript.
+- Two pre-existing bugs fixed along the way: the web API client sent
+  `Content-Type: application/json` on bodyless POSTs, which Fastify rejects with 400 —
+  so **Log out never worked from the browser** (confirmed against the real app); and
+  `forOrganization()` injected a `where` clause into `create` calls, which take no
+  `where` (fixed defensively — not reproducible locally without a DB; meeting creation
+  through it is now exercised by the CI integration tests).
+- **Not done / blocked**: a real Recall.ai-class adapter (needs an account + API key —
+  deliberately not written from memory of their API, since it couldn't be validated);
+  the provider webhook endpoint + signature verification that adapter needs; durable
+  scheduling (timers are in-process and re-armed by `restore()` on boot — fine for one
+  API replica, not several; move to BullMQ delayed jobs in `apps/worker`);
+  `TranscriptBus` is likewise single-process; transcript persistence and finalisation
+  (Phase 5).
 
 ## Phase 5 — Unified persistence, playback, diarization
 - `recording_sessions`/`recording_tracks` finalization job in `apps/worker`.

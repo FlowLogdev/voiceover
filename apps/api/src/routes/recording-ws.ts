@@ -1,60 +1,15 @@
 import type { FastifyInstance } from "fastify";
-import { verifyChunkFrame, type AudioChunkFrame } from "@voiceover/audio";
+import type { AudioChunkFrame } from "@voiceover/audio";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@voiceover/auth";
-import type { AsrEvent, AsrProvider, AsrSession } from "@voiceover/transcription";
+import type { AsrProvider } from "@voiceover/transcription";
 import { clientMessageSchema, type ServerMessage } from "@voiceover/types";
 import type { ChunkStore } from "../recording/chunk-store.js";
+import { TrackIngestion, type TranscriptBus } from "../recording/track-ingestion.js";
 import { env } from "../env.js";
-
-/** Decodes base64 PCM16LE bytes into an Int16Array with a guaranteed-aligned,
- * freshly-allocated backing buffer — `Buffer.from(base64)` can return a view
- * into a shared, arbitrarily-offset pool, and `Int16Array` requires its
- * buffer offset to be a multiple of 2, so reusing that buffer directly risks
- * a RangeError for a subset of base64 inputs. */
-function decodePcm16(bytesBase64: string): Int16Array {
-  const raw = Buffer.from(bytesBase64, "base64");
-  const aligned = new Uint8Array(raw.length);
-  aligned.set(raw);
-  return new Int16Array(aligned.buffer);
-}
-
-function toServerMessage(event: AsrEvent): ServerMessage | null {
-  switch (event.type) {
-    case "partial":
-      return {
-        type: "transcript.partial",
-        segmentId: event.segmentId,
-        sourceTrack: event.sourceTrack,
-        startMs: event.startMs,
-        endMs: event.endMs,
-        text: event.text,
-        languageCode: event.languageCode,
-      };
-    case "final":
-      return {
-        type: "transcript.final",
-        segmentId: event.segmentId,
-        sourceTrack: event.sourceTrack,
-        startMs: event.startMs,
-        endMs: event.endMs,
-        text: event.text,
-        languageCode: event.languageCode,
-      };
-    case "language_detected":
-      return {
-        type: "language.detected",
-        sourceTrack: event.sourceTrack,
-        languageCode: event.languageCode,
-        confidence: event.confidence,
-      };
-    default:
-      return null;
-  }
-}
 
 export async function recordingWsRoutes(
   fastify: FastifyInstance,
-  options: { chunkStore: ChunkStore; asrProvider: AsrProvider },
+  options: { chunkStore: ChunkStore; asrProvider: AsrProvider; transcriptBus: TranscriptBus },
 ) {
   fastify.get(
     "/recording-tracks/:recordingTrackId/audio",
@@ -66,15 +21,15 @@ export async function recordingWsRoutes(
         socket.send(JSON.stringify(message));
       }
 
-      // One ASR session per connection/track, created lazily from the first
-      // chunk's sourceTrack. Transcription here runs against a deterministic
-      // test double, not a real ASR provider — see ARCHITECTURE.md section 5
-      // and packages/transcription's test-double-provider.ts. Transcript
-      // segments are relayed live over this socket only; they are not yet
-      // persisted (TranscriptSegment requires a real meetingId, which
-      // doesn't exist until the recording-session/track creation endpoint —
-      // the Phase 2 gap already tracked in FEATURE_MATRIX.md — is built).
-      let asrSession: AsrSession | null = null;
+      // One ingestion pipeline (chunk store -> ASR -> transcript events) per
+      // connection — the same TrackIngestion the meeting bot path uses.
+      // Transcription runs against a deterministic test double, not a real
+      // ASR provider (ARCHITECTURE.md section 5). Transcript segments are
+      // relayed live only, not yet persisted: TranscriptSegment requires a
+      // real meetingId, and this browser path's recordingTrackId is still
+      // client-generated (the Phase 2 gap tracked in FEATURE_MATRIX.md).
+      const ingestion = new TrackIngestion(recordingTrackId, options);
+      ingestion.onTranscript((message) => sendMessage(message));
 
       async function handleRawMessage(raw: Buffer) {
         let parsed: unknown;
@@ -102,28 +57,12 @@ export async function recordingWsRoutes(
           checksum: msg.checksum,
         };
 
-        if (!verifyChunkFrame(frame)) {
-          sendMessage({ type: "error", message: `Checksum mismatch for sequence ${frame.sequenceNumber}` });
-          return;
+        const ingested = await ingestion.ingest(frame, () =>
+          sendMessage({ type: "ack", sequenceNumber: frame.sequenceNumber }),
+        );
+        if (!ingested.ok) {
+          sendMessage({ type: "error", message: ingested.error });
         }
-
-        await options.chunkStore.saveChunk(recordingTrackId, frame);
-        sendMessage({ type: "ack", sequenceNumber: frame.sequenceNumber });
-
-        if (!asrSession) {
-          asrSession = options.asrProvider.createSession({ sourceTrack: msg.sourceTrack });
-          asrSession.onEvent((event) => {
-            const serverMessage = toServerMessage(event);
-            if (serverMessage) sendMessage(serverMessage);
-          });
-        }
-        asrSession.pushAudio({
-          sequenceNumber: msg.sequenceNumber,
-          startMs: msg.startMs,
-          endMs: msg.endMs,
-          sampleRate: msg.sampleRate,
-          samples: decodePcm16(msg.bytesBase64),
-        });
       }
 
       // Buffer messages that arrive while the (async) auth check below is
@@ -141,7 +80,7 @@ export async function recordingWsRoutes(
       });
 
       socket.on("close", () => {
-        asrSession?.finalize();
+        ingestion.finalize();
       });
 
       // Auth note: verifies the session JWT only — deliberately does not

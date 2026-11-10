@@ -22,6 +22,7 @@ packages/auth          Session/JWT helpers, RBAC policy checks, tenant context
 packages/ai            LLM provider adapter (OpenAI/Anthropic), prompt templates, structured output
 packages/transcription ASR provider adapter interface + implementations, diarization glue
 packages/audio         Audio chunking, VAD, resampling, format conversion shared by extension/worker
+packages/meeting-bot   MeetingBotProvider contract, bot lifecycle/retry/scheduling (BotSessionManager), test double
 packages/ui            Shared design-system components (shadcn/ui based)
 packages/config        Shared eslint/tsconfig/tailwind config
 packages/testing        Shared test fixtures/mocks (fake audio, fake transcripts, fake tenants)

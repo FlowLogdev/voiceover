@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [meetings, setMeetings] = useState<MeetingSummaryDTO[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testTrackId] = useState(newTrackId);
+  const [newTitle, setNewTitle] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +41,17 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, [router]);
+
+  async function onCreateMeeting(event: React.FormEvent) {
+    event.preventDefault();
+    if (!session?.activeOrganizationId) return;
+    try {
+      const { id } = await api.createMeeting(session.activeOrganizationId, { title: newTitle });
+      router.push(`/meetings/${id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create meeting");
+    }
+  }
 
   async function onLogout() {
     await api.logout();
@@ -81,19 +93,35 @@ export default function DashboardPage() {
 
       <section>
         <h2 className="mb-4 text-lg font-medium">Meetings</h2>
+        <form onSubmit={onCreateMeeting} className="mb-6 flex gap-2">
+          <input
+            required
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="New meeting title"
+            className="flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
+          />
+          <button type="submit" className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500">
+            Create meeting
+          </button>
+        </form>
         {meetings === null ? (
           <p className="text-slate-400">Loading meetings...</p>
         ) : meetings.length === 0 ? (
           <div className="rounded-md border border-dashed border-slate-700 p-8 text-center text-slate-400">
-            No meetings yet. Recording (browser capture / meeting bot) is built in a later
-            phase — see IMPLEMENTATION_PLAN.md.
+            No meetings yet. Create one above, then send a meeting bot to it.
           </div>
         ) : (
           <ul className="divide-y divide-slate-800">
             {meetings.map((m) => (
               <li key={m.id} className="py-3">
-                <p className="font-medium">{m.title}</p>
-                <p className="text-sm text-slate-400">{m.platform ?? "unknown platform"}</p>
+                <a href={`/meetings/${m.id}`} className="block hover:text-indigo-300">
+                  <p className="font-medium">{m.title}</p>
+                  <p className="text-sm text-slate-400">
+                    {m.platform ?? "unknown platform"}
+                    {m.recordingMethod && ` · ${m.recordingMethod === "BOT" ? "meeting bot" : "browser capture"}`}
+                  </p>
+                </a>
               </li>
             ))}
           </ul>

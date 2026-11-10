@@ -4,10 +4,24 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import type { ZodIssue } from "zod";
 import { TestDoubleAsrProvider, type AsrProvider } from "@voiceover/transcription";
+import { prisma } from "@voiceover/database";
+import {
+  AdmissionRetryPolicy,
+  BotSessionManager,
+  TestDoubleMeetingBotProvider,
+  type BotSessionRepository,
+  type BotStatusChange,
+  type MeetingBotProvider,
+} from "@voiceover/meeting-bot";
 import { authContextPlugin } from "./plugins/auth-context.js";
 import { authRoutes } from "./routes/auth.js";
 import { meetingRoutes } from "./routes/meetings.js";
 import { recordingWsRoutes } from "./routes/recording-ws.js";
+import { botSessionRoutes } from "./routes/bot-sessions.js";
+import { transcriptWsRoutes } from "./routes/transcript-ws.js";
+import { BotIngestionSink } from "./meeting-bot/bot-audio-sink.js";
+import { PrismaBotSessionRepository } from "./meeting-bot/prisma-bot-session-repository.js";
+import { TrackIngestion, TranscriptBus } from "./recording/track-ingestion.js";
 import { PrismaFileChunkStore } from "./recording/prisma-file-chunk-store.js";
 import type { ChunkStore } from "./recording/chunk-store.js";
 import { env } from "./env.js";
@@ -30,6 +44,48 @@ function isZodError(error: unknown): error is { name: "ZodError"; issues: ZodIss
 export interface BuildAppOptions {
   chunkStore?: ChunkStore;
   asrProvider?: AsrProvider;
+  meetingBotProvider?: MeetingBotProvider;
+  botSessionRepository?: BotSessionRepository;
+  botRetryPolicy?: AdmissionRetryPolicy;
+}
+
+declare module "fastify" {
+  interface FastifyInstance {
+    botSessionManager: BotSessionManager;
+    transcriptBus: TranscriptBus;
+  }
+}
+
+function createMeetingBotProvider(): MeetingBotProvider {
+  // No real meeting-bot provider is provisioned yet (ARCHITECTURE.md section
+  // 5). Fail loudly rather than silently running the simulator if someone
+  // configures a provider name we don't have an adapter for.
+  const configured = env.MEETING_BOT_PROVIDER;
+  if (configured && configured !== "test-double") {
+    throw new Error(`MEETING_BOT_PROVIDER="${configured}" has no adapter yet — only "test-double" is implemented`);
+  }
+  return new TestDoubleMeetingBotProvider();
+}
+
+/**
+ * Audit-logs bot exits the user didn't ask for (meeting ended, removed by
+ * host). User-requested leaves are logged by the leave route itself, with
+ * the acting user attached.
+ */
+async function auditProviderInitiatedLeave({ previous, session }: BotStatusChange): Promise<void> {
+  if (session.status !== "LEFT" || session.failureReason === null || previous === "LEFT") return;
+  const row = await prisma.recordingSession.findUnique({
+    where: { id: session.id },
+    select: { meeting: { select: { organizationId: true } } },
+  });
+  if (!row) return;
+  await prisma.auditLog.create({
+    data: {
+      organizationId: row.meeting.organizationId,
+      action: "BOT_LEFT",
+      metadata: { recordingSessionId: session.id, reason: session.failureReason },
+    },
+  });
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -39,6 +95,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // ARCHITECTURE.md section 5) — this is a deterministic test double, not
   // real transcription. Swap behind the same AsrProvider interface once one is.
   const asrProvider = options.asrProvider ?? new TestDoubleAsrProvider();
+  const transcriptBus = new TranscriptBus();
+  const meetingBotProvider = options.meetingBotProvider ?? createMeetingBotProvider();
+  const botSessionManager = new BotSessionManager({
+    provider: meetingBotProvider,
+    repository: options.botSessionRepository ?? new PrismaBotSessionRepository(),
+    retryPolicy: options.botRetryPolicy,
+    audioSink: new BotIngestionSink(
+      (recordingTrackId) => new TrackIngestion(recordingTrackId, { chunkStore, asrProvider, transcriptBus }),
+    ),
+    onStatusChange: auditProviderInitiatedLeave,
+    logError: (error, message) => app.log.error(error, message),
+  });
+  app.decorate("botSessionManager", botSessionManager);
+  app.decorate("transcriptBus", transcriptBus);
+  app.addHook("onClose", async () => botSessionManager.shutdown());
 
   await app.register(cors, { origin: env.APP_URL, credentials: true });
   await app.register(cookie);
@@ -65,7 +136,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   await app.register(authRoutes);
   await app.register(meetingRoutes);
-  await app.register(recordingWsRoutes, { chunkStore, asrProvider });
+  await app.register(recordingWsRoutes, { chunkStore, asrProvider, transcriptBus });
+  await app.register(transcriptWsRoutes, { transcriptBus });
+  await app.register(botSessionRoutes, { manager: botSessionManager, provider: meetingBotProvider });
 
   return app;
 }

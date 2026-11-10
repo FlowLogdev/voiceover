@@ -54,6 +54,7 @@ enum RecordingSessionStatus {
 enum BotJoinStatus {
   SCHEDULED
   JOINING
+  WAITING_ROOM
   IN_CALL
   ADMISSION_REJECTED
   LEFT
@@ -277,6 +278,12 @@ model RecordingSession {
   status        RecordingSessionStatus @default(PENDING)
   botProvider   String?
   botJoinStatus BotJoinStatus?
+  // Meeting-bot sessions only (method = BOT). See packages/meeting-bot.
+  botExternalId      String? // provider's bot id for the current join attempt
+  botMeetingUrl      String? // validated + normalised via parseMeetingUrl()
+  botName            String?
+  botScheduledJoinAt DateTime?
+  botJoinAttempts    Int       @default(0)
   startedAt     DateTime?
   pausedAt      DateTime?
   endedAt       DateTime?
@@ -288,6 +295,7 @@ model RecordingSession {
   tracks  RecordingTrack[]
 
   @@index([meetingId])
+  @@index([method, botJoinStatus])
   @@map("recording_sessions")
 }
 

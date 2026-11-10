@@ -11,6 +11,23 @@ if (process.env.NODE_ENV !== "production") {
   globalThis.__voiceoverPrisma = prisma;
 }
 
+const OPERATIONS_WITH_WHERE = new Set([
+  "findUnique",
+  "findUniqueOrThrow",
+  "findFirst",
+  "findFirstOrThrow",
+  "findMany",
+  "update",
+  "updateMany",
+  "updateManyAndReturn",
+  "upsert",
+  "delete",
+  "deleteMany",
+  "count",
+  "aggregate",
+  "groupBy",
+]);
+
 /**
  * Tenant-scoped accessor. Every call site that reads/writes organization-scoped
  * tables must go through this instead of the raw `prisma` client, so a missing
@@ -35,7 +52,11 @@ export function forOrganization(organizationId: string) {
             "Share",
             "Membership",
           ]);
-          if (tenantScopedModels.has(model)) {
+          // `create`/`createMany` take no `where` — Prisma rejects an unknown
+          // argument there, so injecting one would break every tenant-scoped
+          // insert. Callers must set `organizationId` in `data` (it's a
+          // required column, so the type system already enforces that).
+          if (tenantScopedModels.has(model) && OPERATIONS_WITH_WHERE.has(operation)) {
             const a = args as { where?: Record<string, unknown> };
             a.where = { ...(a.where ?? {}), organizationId };
           }

@@ -7,6 +7,8 @@ const envSchema = z.object({
   APP_URL: z.string().default("http://localhost:3000"),
   // Local-disk placeholder for S3-compatible storage — see prisma-file-chunk-store.ts.
   AUDIO_STORAGE_DIR: z.string().default("./.data/audio-chunks"),
+  // Only "test-double" has an adapter so far; empty/unset means test-double.
+  MEETING_BOT_PROVIDER: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
@@ -18,6 +20,7 @@ function computeEnv(): Env {
     SESSION_SECRET: process.env.SESSION_SECRET,
     APP_URL: process.env.APP_URL,
     AUDIO_STORAGE_DIR: process.env.AUDIO_STORAGE_DIR,
+    MEETING_BOT_PROVIDER: process.env.MEETING_BOT_PROVIDER || undefined,
   });
 }
 
