@@ -11,9 +11,11 @@ import type { FastifyInstance } from "fastify";
 import type { AddressInfo } from "node:net";
 import { prisma } from "@voiceover/database";
 import { AdmissionRetryPolicy, TestDoubleMeetingBotProvider } from "@voiceover/meeting-bot";
-import type { BotSessionDTO } from "@voiceover/types";
+import { RECORDING_CONSENT_NOTICE, type BotSessionDTO } from "@voiceover/types";
 import { buildApp } from "../app.js";
 import { InMemoryChunkStore } from "../recording/chunk-store.js";
+
+const consent = { attested: true, noticeVersion: RECORDING_CONSENT_NOTICE.version } as const;
 
 async function waitFor<T>(fn: () => Promise<T | undefined> | T | undefined, timeoutMs = 10_000): Promise<T> {
   const start = Date.now();
@@ -98,7 +100,7 @@ describe("meeting bot sessions (real Postgres, test-double bot provider)", () =>
       method: "POST",
       url: `/organizations/${user.organizationId}/meetings/${meetingId}/bot-sessions`,
       headers: { cookie: user.cookie },
-      payload: { meetingUrl: "https://meet.google.com/ABC-defg-hij" },
+      payload: { meetingUrl: "https://meet.google.com/ABC-defg-hij", consent },
     });
     expect(invite.statusCode).toBe(201);
     const created = invite.json() as BotSessionDTO;
@@ -147,7 +149,17 @@ describe("meeting bot sessions (real Postgres, test-double bot provider)", () =>
       where: { organizationId: user.organizationId },
       orderBy: { createdAt: "asc" },
     });
-    expect(audit.map((a) => a.action)).toEqual(["BOT_INVITED", "BOT_LEFT"]);
+    // Same-transaction rows can share a createdAt, so compare as a set.
+    expect(audit.map((a) => a.action).sort()).toEqual(["BOT_INVITED", "BOT_LEFT", "CONSENT_GRANTED"]);
+    const consents = await prisma.recordingConsent.findMany({ where: { meetingId } });
+    expect(consents).toHaveLength(1);
+    expect(consents[0]).toMatchObject({
+      recordingSessionId: created.id,
+      basis: "ORGANIZER_ATTESTATION",
+      noticeVersion: RECORDING_CONSENT_NOTICE.version,
+      granted: true,
+      revokedAt: null,
+    });
 
     // Leaving again is a no-op, not a second audit entry.
     const again = await app.inject({
@@ -156,7 +168,7 @@ describe("meeting bot sessions (real Postgres, test-double bot provider)", () =>
       headers: { cookie: user.cookie },
     });
     expect((again.json() as BotSessionDTO).status).toBe("LEFT");
-    expect(await prisma.auditLog.count({ where: { organizationId: user.organizationId } })).toBe(2);
+    expect(await prisma.auditLog.count({ where: { organizationId: user.organizationId } })).toBe(3);
   });
 
   it("schedules a future join, rejects a second active bot, and cancels cleanly", async () => {
@@ -169,7 +181,7 @@ describe("meeting bot sessions (real Postgres, test-double bot provider)", () =>
       method: "POST",
       url,
       headers: { cookie: user.cookie },
-      payload: { meetingUrl: "https://acme.zoom.us/j/81234567890?pwd=x", joinAt, botName: "Scribe" },
+      payload: { meetingUrl: "https://acme.zoom.us/j/81234567890?pwd=x", joinAt, botName: "Scribe", consent },
     });
     expect(invite.statusCode).toBe(201);
     const created = invite.json() as BotSessionDTO;
@@ -180,7 +192,7 @@ describe("meeting bot sessions (real Postgres, test-double bot provider)", () =>
       method: "POST",
       url,
       headers: { cookie: user.cookie },
-      payload: { meetingUrl: "https://meet.google.com/abc-defg-hij" },
+      payload: { meetingUrl: "https://meet.google.com/abc-defg-hij", consent },
     });
     expect(duplicate.statusCode).toBe(409);
 
@@ -203,15 +215,20 @@ describe("meeting bot sessions (real Postgres, test-double bot provider)", () =>
     const url = `/organizations/${user.organizationId}/meetings/${meetingId}/bot-sessions`;
 
     for (const payload of [
-      { meetingUrl: "https://example.com/j/81234567890" },
-      { meetingUrl: "http://meet.google.com/abc-defg-hij" },
-      { meetingUrl: "https://meet.google.com/abc-defg-hij", joinAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() },
-      { meetingUrl: "https://meet.google.com/abc-defg-hij", joinAt: new Date(Date.now() + 120 * 86_400_000).toISOString() },
+      { meetingUrl: "https://example.com/j/81234567890", consent },
+      { meetingUrl: "http://meet.google.com/abc-defg-hij", consent },
+      { meetingUrl: "https://meet.google.com/abc-defg-hij", consent, joinAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() },
+      { meetingUrl: "https://meet.google.com/abc-defg-hij", consent, joinAt: new Date(Date.now() + 120 * 86_400_000).toISOString() },
+      // No consent attestation, a refused one, and one against an outdated notice.
+      { meetingUrl: "https://meet.google.com/abc-defg-hij" },
+      { meetingUrl: "https://meet.google.com/abc-defg-hij", consent: { attested: false, noticeVersion: RECORDING_CONSENT_NOTICE.version } },
+      { meetingUrl: "https://meet.google.com/abc-defg-hij", consent: { attested: true, noticeVersion: "2020-01-01" } },
     ]) {
       const response = await app.inject({ method: "POST", url, headers: { cookie: user.cookie }, payload });
       expect(response.statusCode, JSON.stringify(payload)).toBe(400);
     }
     expect(await prisma.recordingSession.count({ where: { meetingId } })).toBe(0);
+    expect(await prisma.recordingConsent.count({ where: { meetingId } })).toBe(0);
   });
 
   it("isolates bot sessions and their transcript feed between organizations", async () => {
@@ -222,7 +239,7 @@ describe("meeting bot sessions (real Postgres, test-double bot provider)", () =>
       method: "POST",
       url: `/organizations/${owner.organizationId}/meetings/${meetingId}/bot-sessions`,
       headers: { cookie: owner.cookie },
-      payload: { meetingUrl: "https://teams.live.com/meet/9876543210", joinAt: new Date(Date.now() + 3_600_000).toISOString() },
+      payload: { meetingUrl: "https://teams.live.com/meet/9876543210", joinAt: new Date(Date.now() + 3_600_000).toISOString(), consent },
     });
     const created = invite.json() as BotSessionDTO;
 
@@ -241,7 +258,7 @@ describe("meeting bot sessions (real Postgres, test-double bot provider)", () =>
       method: "POST",
       url: `/organizations/${outsider.organizationId}/meetings/${meetingId}/bot-sessions`,
       headers: { cookie: outsider.cookie },
-      payload: { meetingUrl: "https://meet.google.com/abc-defg-hij" },
+      payload: { meetingUrl: "https://meet.google.com/abc-defg-hij", consent },
     });
     expect(hijack.statusCode).toBe(404);
 

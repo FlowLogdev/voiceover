@@ -9,7 +9,7 @@ export type { BotSessionManagerOptions, BotStatusChange, ProviderEventOutcome } 
 export { TestDoubleMeetingBotProvider } from "./test-double-provider.js";
 export type { TestDoubleBotScenario, TestDoubleMeetingBotProviderOptions } from "./test-double-provider.js";
 export { InMemoryBotSessionRepository } from "./in-memory-repository.js";
-export { systemTimers } from "./types.js";
+export { BOT_RECORDING_ANNOUNCEMENT, systemTimers } from "./types.js";
 export type {
   BotAudioFrame,
   BotAudioSink,

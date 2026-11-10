@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
+import { api } from "@/lib/api-client";
 import { buildChunkFrame } from "@voiceover/audio";
 import type { ServerMessage } from "@voiceover/types";
 
@@ -36,6 +37,11 @@ function silentSamples(): Float32Array {
 export default function RecorderPage() {
   const params = useParams<{ trackId: string }>();
   const trackId = params.trackId;
+  // Set when opened from a meeting page, so this page can stop the server-side session.
+  const search = useSearchParams();
+  const organizationId = search.get("org");
+  const sessionId = search.get("session");
+  const [closeInfo, setCloseInfo] = useState<string | null>(null);
 
   const [connectionState, setConnectionState] = useState<"connecting" | "open" | "closed" | "error">(
     "connecting",
@@ -49,7 +55,11 @@ export default function RecorderPage() {
     const ws = new WebSocket(`${WS_BASE_URL}/recording-tracks/${trackId}/audio`);
     wsRef.current = ws;
     ws.addEventListener("open", () => setConnectionState("open"));
-    ws.addEventListener("close", () => setConnectionState("closed"));
+    ws.addEventListener("close", (event) => {
+      setConnectionState("closed");
+      // 4003 not yours / consent revoked, 4004 unknown track, 4009 recording stopped.
+      if (event.code !== 1000 && event.code !== 1005) setCloseInfo(`${event.code} ${event.reason}`.trim());
+    });
     ws.addEventListener("error", () => setConnectionState("error"));
     ws.addEventListener("message", (event) => {
       try {
@@ -109,6 +119,11 @@ export default function RecorderPage() {
         >
           {connectionState}
         </span>
+        {closeInfo && <span className="ml-2 text-red-400">({closeInfo})</span>}
+      </p>
+      <p className="mt-1 text-xs text-slate-500">
+        Tracks are issued by the server when a recording starts from a meeting page (with a consent
+        confirmation); the server only accepts audio from the user who started it.
       </p>
       <p className="mt-1 text-sm text-amber-400">
         Sends synthetic test audio, not real speech — the transcript text below comes from a
@@ -130,6 +145,15 @@ export default function RecorderPage() {
         >
           Send silent chunk
         </button>
+        {organizationId && sessionId && (
+          <button
+            onClick={() => void api.stopRecording(organizationId, sessionId).catch(() => {})}
+            disabled={connectionState !== "open"}
+            className="rounded-md border border-red-800 px-4 py-2 text-sm text-red-300 hover:bg-red-950/40 disabled:opacity-40"
+          >
+            Stop recording
+          </button>
+        )}
       </div>
 
       <ul className="mt-6 divide-y divide-slate-800 text-sm">

@@ -56,6 +56,8 @@ export class TestDoubleMeetingBotProvider implements MeetingBotProvider {
   private readonly speechBurstMs: number;
   private readonly silenceMs: number;
   private readonly bots = new Map<string, SimulatedBot>();
+  /** Every join request received, in order — lets tests check what a real adapter would be told (e.g. the recording notice). */
+  readonly joinRequests: JoinMeetingRequest[] = [];
   private readonly attemptsBySession = new Map<string, number>();
 
   constructor(options: TestDoubleMeetingBotProviderOptions = {}) {
@@ -78,6 +80,7 @@ export class TestDoubleMeetingBotProvider implements MeetingBotProvider {
   }
 
   async joinMeeting(request: JoinMeetingRequest): Promise<{ providerBotId: string }> {
+    this.joinRequests.push(request);
     const attempt = (this.attemptsBySession.get(request.sessionId) ?? 0) + 1;
     this.attemptsBySession.set(request.sessionId, attempt);
     const scenario = this.scenario(request, attempt);

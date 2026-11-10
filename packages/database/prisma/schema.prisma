@@ -127,14 +127,15 @@ model User {
   updatedAt     DateTime  @updatedAt
   deletedAt     DateTime?
 
-  memberships         Membership[]
-  meetingsHosted      Meeting[]            @relation("MeetingHost")
-  recordingConsents   RecordingConsent[]
-  comments            Comment[]
-  bookmarks           Bookmark[]
-  chatMessages        ChatMessage[]
-  auditLogs           AuditLog[]
-  calendarConnections CalendarConnection[]
+  memberships              Membership[]
+  meetingsHosted           Meeting[]            @relation("MeetingHost")
+  recordingConsents        RecordingConsent[]
+  recordingSessionsStarted RecordingSession[]   @relation("RecordingSessionStarter")
+  comments                 Comment[]
+  bookmarks                Bookmark[]
+  chatMessages             ChatMessage[]
+  auditLogs                AuditLog[]
+  calendarConnections      CalendarConnection[]
 
   @@map("users")
 }
@@ -256,43 +257,64 @@ model Participant {
   @@map("participants")
 }
 
-model RecordingConsent {
-  id        String    @id @default(uuid())
-  meetingId String
-  userId    String?
-  granted   Boolean
-  grantedAt DateTime  @default(now())
-  revokedAt DateTime?
+/// Why a recording was allowed to start. ORGANIZER_ATTESTATION = the user who
+/// started the recording confirmed, against a specific versioned notice
+/// (noticeVersion), that participants were told and any legally required
+/// consent was obtained. Participant-level acknowledgement is a later basis.
+enum ConsentBasis {
+  ORGANIZER_ATTESTATION
+}
 
-  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
-  user    User?   @relation(fields: [userId], references: [id])
+/// Every recording session (browser or bot) is created together with one of
+/// these. Revoking (revokedAt) stops all active recording on the meeting.
+model RecordingConsent {
+  id                 String       @id @default(uuid())
+  meetingId          String
+  recordingSessionId String?
+  userId             String?
+  basis              ConsentBasis @default(ORGANIZER_ATTESTATION)
+  noticeVersion      String?
+  granted            Boolean
+  grantedAt          DateTime     @default(now())
+  revokedAt          DateTime?
+  revokedByUserId    String?
+
+  meeting          Meeting           @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  recordingSession RecordingSession? @relation(fields: [recordingSessionId], references: [id], onDelete: Cascade)
+  user             User?             @relation(fields: [userId], references: [id])
 
   @@index([meetingId])
+  @@index([recordingSessionId])
   @@map("recording_consents")
 }
 
 model RecordingSession {
-  id            String                 @id @default(uuid())
-  meetingId     String
-  method        RecordingMethod
-  status        RecordingSessionStatus @default(PENDING)
-  botProvider   String?
-  botJoinStatus BotJoinStatus?
+  id                 String                 @id @default(uuid())
+  meetingId          String
+  method             RecordingMethod
+  status             RecordingSessionStatus @default(PENDING)
+  botProvider        String?
+  botJoinStatus      BotJoinStatus?
   // Meeting-bot sessions only (method = BOT). See packages/meeting-bot.
   botExternalId      String? // provider's bot id for the current join attempt
   botMeetingUrl      String? // validated + normalised via parseMeetingUrl()
   botName            String?
   botScheduledJoinAt DateTime?
-  botJoinAttempts    Int       @default(0)
-  startedAt     DateTime?
-  pausedAt      DateTime?
-  endedAt       DateTime?
-  failureReason String?
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
+  botJoinAttempts    Int                    @default(0)
+  startedAt          DateTime?
+  pausedAt           DateTime?
+  endedAt            DateTime?
+  failureReason      String?
+  /// The user who started (or invited the bot for) this recording. For
+  /// browser capture, only this user may upload audio to its tracks.
+  startedByUserId    String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
 
-  meeting Meeting          @relation(fields: [meetingId], references: [id], onDelete: Cascade)
-  tracks  RecordingTrack[]
+  meeting   Meeting            @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  startedBy User?              @relation("RecordingSessionStarter", fields: [startedByUserId], references: [id])
+  tracks    RecordingTrack[]
+  consents  RecordingConsent[]
 
   @@index([meetingId])
   @@index([method, botJoinStatus])

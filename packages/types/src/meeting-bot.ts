@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { consentAttestationSchema } from "./recording-consent.js";
 
 export const botStatusSchema = z.enum([
   "SCHEDULED",
@@ -16,6 +17,8 @@ export const createBotSessionRequestSchema = z.object({
   botName: z.string().trim().min(1).max(100).optional(),
   /** Omit to join now. */
   joinAt: z.string().datetime().optional(),
+  /** Required: the inviting user's attestation against RECORDING_CONSENT_NOTICE. */
+  consent: consentAttestationSchema,
 });
 export type CreateBotSessionRequest = z.infer<typeof createBotSessionRequestSchema>;
 

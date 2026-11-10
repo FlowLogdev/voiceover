@@ -10,9 +10,17 @@ import { TrackIngestion } from "../recording/track-ingestion.js";
 export class BotIngestionSink implements BotAudioSink {
   private readonly pipelines = new Map<string, TrackIngestion>();
 
-  constructor(private readonly createIngestion: (recordingTrackId: string) => TrackIngestion) {}
+  /**
+   * @param isStopped recording on this track was stopped (consent revoked):
+   *   frames are dropped even if the provider hasn't removed the bot yet.
+   */
+  constructor(
+    private readonly createIngestion: (recordingTrackId: string) => TrackIngestion,
+    private readonly isStopped: (recordingTrackId: string) => boolean = () => false,
+  ) {}
 
   async pushAudio(session: BotSessionRecord, frame: BotAudioFrame): Promise<void> {
+    if (this.isStopped(session.recordingTrackId)) return;
     let pipeline = this.pipelines.get(session.id);
     if (!pipeline) {
       pipeline = this.createIngestion(session.recordingTrackId);

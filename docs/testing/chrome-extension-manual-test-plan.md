@@ -23,7 +23,10 @@ executed. Do not treat this as "passed" until someone has actually run it.
 ## Test cases
 
 1. **Happy path**: open a tab playing audio (e.g. a YouTube video, as a stand-in
-   for a live meeting), click the extension icon, click Start.
+   for a live meeting), click the extension icon. Start must be disabled until
+   the consent checkbox is ticked; tick it, click Start.
+   - Expect: a new meeting (named after the tab) appears on the dashboard, with a
+     BROWSER recording session and a consent record (`GET .../consents`).
    - Expect: a permission/activation prompt if first use, then the badge shows
      "REC" and turns red, the popup shows "Recording (mm:ss)" counting up, and
      you can still hear the tab's audio (playback must not be muted).
@@ -40,8 +43,12 @@ executed. Do not treat this as "passed" until someone has actually run it.
    with the correct elapsed time (status persisted via `chrome.storage.session`
    and the badge stays visible the whole time the popup is closed).
 5. **No active session**: log out of the web app (clearing the cookie), then
-   try to start a recording. Expect the WS connection to be closed by the
-   server with code 4001 and the popup to surface an error state.
+   try to start a recording. Expect the popup to show "Log in to VoiceOver in
+   this browser first" and no capture to start.
+5b. **Consent withdrawn mid-recording**: while recording, open the meeting in the
+   web app and click "Stop all recording & withdraw consent". Expect the popup to
+   switch to an error ("Recording stopped by the server (4003 …)"), the badge to
+   clear, and capture to stop. Not just the upload.
 6. **Tab closed mid-recording**: start recording, close the captured tab.
    Expect `getUserMedia`'s track to end, triggering a clear failure/stopped
    state rather than a silent hang — if it doesn't, this is a real gap to fix,
@@ -53,10 +60,6 @@ executed. Do not treat this as "passed" until someone has actually run it.
 
 ## What's intentionally out of scope for this pass
 
-- Tenant/track-ownership verification on the ingestion WebSocket (any valid
-  session can currently push chunks to any `recordingTrackId` — there's no
-  recording-session/track creation endpoint yet to check ownership against).
-  Do not point this at a shared/production environment.
 - Real object storage (chunks land on local disk under `AUDIO_STORAGE_DIR`,
   not S3 — see the comment in `prisma-file-chunk-store.ts`).
 - Resampling/downsampling: chunks are stored at the tab's native sample rate

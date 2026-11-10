@@ -5,7 +5,8 @@ import type {
   PopupRequest,
   TranscriptLine,
 } from "../shared/messages.js";
-import { WS_BASE_URL } from "../shared/messages.js";
+import type { RecordingSessionDTO, SessionResponse } from "@voiceover/types";
+import { API_BASE_URL, WS_BASE_URL } from "../shared/messages.js";
 
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 const MAX_TRANSCRIPT_LINES = 200;
@@ -14,11 +15,77 @@ type BaseStatus = Omit<CaptureStatus, "transcriptLines">;
 
 let currentBaseStatus: BaseStatus = { state: "idle", startedAt: null };
 let transcriptLines: TranscriptLine[] = [];
-/** Generated client-side for this vertical slice — a real recording-session/
- * track creation API (see IMPLEMENTATION_PLAN.md Phase 2 follow-on) should
- * replace this with a server-issued id before any audio is treated as real
- * production data. */
-let currentRecordingTrackId: string | null = null;
+/** The server-issued recording session this capture uploads to (so Stop can end it server-side). */
+interface ActiveRecording {
+  organizationId: string;
+  recordingSessionId: string;
+  recordingTrackId: string;
+}
+let activeRecording: ActiveRecording | null = null;
+
+/**
+ * Calls the VoiceOver API with the user's web-app session cookie (the
+ * extension's host permission for the API origin lets it send that cookie).
+ */
+async function apiRequest<T>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    credentials: "include",
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (response.status === 401) throw new Error("Log in to VoiceOver in this browser first");
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(payload.error ?? `VoiceOver API error ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+/**
+ * Creates a meeting for this tab and a server-issued browser recording
+ * session for it, carrying the user's consent attestation. The server records
+ * the consent and is the only source of track ids; its upload socket accepts
+ * audio only from the user who started the session.
+ */
+async function createServerRecording(
+  tabTitle: string | undefined,
+  consent: { attested: true; noticeVersion: string },
+): Promise<ActiveRecording> {
+  const session = await apiRequest<SessionResponse>("/auth/session");
+  const organizationId = session.activeOrganizationId;
+  if (!organizationId) throw new Error("Your VoiceOver account has no active organization");
+  const meeting = await apiRequest<{ id: string }>(`/organizations/${organizationId}/meetings`, {
+    title: (tabTitle || "Browser recording").slice(0, 200),
+    recordingMethod: "BROWSER",
+  });
+  const recording = await apiRequest<RecordingSessionDTO>(
+    `/organizations/${organizationId}/meetings/${meeting.id}/recording-sessions`,
+    { consent, sourceTracks: ["remote_tab"] },
+  );
+  const track = recording.tracks.find((t) => t.sourceTrack === "remote_tab");
+  if (!track) throw new Error("Server did not issue a tab-audio track");
+  return { organizationId, recordingSessionId: recording.id, recordingTrackId: track.id };
+}
+
+async function stopServerRecording(recording: ActiveRecording | null): Promise<void> {
+  if (!recording) return;
+  try {
+    await apiRequest(
+      `/organizations/${recording.organizationId}/recording-sessions/${recording.recordingSessionId}/stop`,
+      {},
+    );
+  } catch {
+    // Capture and the upload socket are already closed. The server-side
+    // session stays RECORDING until stopped from the web app, but nothing
+    // more can be uploaded to it without this user's session cookie.
+  }
+}
+
+function setActiveRecording(recording: ActiveRecording | null) {
+  activeRecording = recording;
+  void chrome.storage.session.set({ activeRecording: recording });
+}
 
 function fullStatus(): CaptureStatus {
   return { ...currentBaseStatus, transcriptLines };
@@ -85,7 +152,7 @@ async function getActiveTab(): Promise<chrome.tabs.Tab> {
   return tab;
 }
 
-async function startCapture(): Promise<void> {
+async function startCapture(consent: { attested: true; noticeVersion: string }): Promise<void> {
   transcriptLines = [];
   setBaseStatus({ state: "starting", startedAt: null });
 
@@ -100,14 +167,16 @@ async function startCapture(): Promise<void> {
     });
   });
 
+  const recording = await createServerRecording(tab.title, consent);
+  setActiveRecording(recording);
+
   await ensureOffscreenDocument();
 
-  currentRecordingTrackId = crypto.randomUUID();
   const command: OffscreenCommand = {
     type: "init-capture",
     streamId,
-    recordingTrackId: currentRecordingTrackId,
-    wsUrl: `${WS_BASE_URL}/recording-tracks/${currentRecordingTrackId}/audio`,
+    recordingTrackId: recording.recordingTrackId,
+    wsUrl: `${WS_BASE_URL}/recording-tracks/${recording.recordingTrackId}/audio`,
   };
   await chrome.runtime.sendMessage(command);
 }
@@ -120,6 +189,8 @@ chrome.runtime.onMessage.addListener((message: PopupRequest | OffscreenEvent, _s
   void (async () => {
     if (message.type === "offscreen-status") {
       setBaseStatus(message.status);
+      // The server ended it (stopped elsewhere / consent revoked): nothing left to stop.
+      if (message.status.state === "error") setActiveRecording(null);
       return;
     }
     if (message.type === "transcript-line") {
@@ -130,7 +201,7 @@ chrome.runtime.onMessage.addListener((message: PopupRequest | OffscreenEvent, _s
     switch (message.type) {
       case "start":
         try {
-          await startCapture();
+          await startCapture(message.consent);
         } catch (error) {
           setBaseStatus({ state: "error", startedAt: null, error: (error as Error).message });
         }
@@ -147,7 +218,8 @@ chrome.runtime.onMessage.addListener((message: PopupRequest | OffscreenEvent, _s
       case "stop":
         await sendOffscreenCommand({ type: "stop-capture" });
         await closeOffscreenDocument();
-        currentRecordingTrackId = null;
+        await stopServerRecording(activeRecording);
+        setActiveRecording(null);
         setBaseStatus({ state: "idle", startedAt: null });
         sendResponse(fullStatus());
         return;
@@ -160,7 +232,8 @@ chrome.runtime.onMessage.addListener((message: PopupRequest | OffscreenEvent, _s
 });
 
 // Restore badge state if the service worker was restarted mid-recording.
-void chrome.storage.session.get("captureStatus").then((stored) => {
+void chrome.storage.session.get(["captureStatus", "activeRecording"]).then((stored) => {
+  activeRecording = (stored.activeRecording as ActiveRecording | null | undefined) ?? null;
   if (stored.captureStatus) {
     const restored = stored.captureStatus as CaptureStatus;
     currentBaseStatus = { state: restored.state, startedAt: restored.startedAt, error: restored.error };

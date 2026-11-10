@@ -19,6 +19,9 @@ import { meetingRoutes } from "./routes/meetings.js";
 import { recordingWsRoutes } from "./routes/recording-ws.js";
 import { botSessionRoutes } from "./routes/bot-sessions.js";
 import { transcriptWsRoutes } from "./routes/transcript-ws.js";
+import { recordingSessionRoutes } from "./routes/recording-sessions.js";
+import { RecordingControl } from "./recording/recording-control.js";
+import { PrismaUploadAuthorizer, type UploadAuthorizer } from "./recording/upload-authorizer.js";
 import { BotIngestionSink } from "./meeting-bot/bot-audio-sink.js";
 import { PrismaBotSessionRepository } from "./meeting-bot/prisma-bot-session-repository.js";
 import { TrackIngestion, TranscriptBus } from "./recording/track-ingestion.js";
@@ -47,12 +50,15 @@ export interface BuildAppOptions {
   meetingBotProvider?: MeetingBotProvider;
   botSessionRepository?: BotSessionRepository;
   botRetryPolicy?: AdmissionRetryPolicy;
+  /** Who may upload to which browser-capture track. Defaults to the Prisma-backed ownership check. */
+  uploadAuthorizer?: UploadAuthorizer;
 }
 
 declare module "fastify" {
   interface FastifyInstance {
     botSessionManager: BotSessionManager;
     transcriptBus: TranscriptBus;
+    recordingControl: RecordingControl;
   }
 }
 
@@ -96,6 +102,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // real transcription. Swap behind the same AsrProvider interface once one is.
   const asrProvider = options.asrProvider ?? new TestDoubleAsrProvider();
   const transcriptBus = new TranscriptBus();
+  const recordingControl = new RecordingControl();
   const meetingBotProvider = options.meetingBotProvider ?? createMeetingBotProvider();
   const botSessionManager = new BotSessionManager({
     provider: meetingBotProvider,
@@ -103,12 +110,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     retryPolicy: options.botRetryPolicy,
     audioSink: new BotIngestionSink(
       (recordingTrackId) => new TrackIngestion(recordingTrackId, { chunkStore, asrProvider, transcriptBus }),
+      (recordingTrackId) => recordingControl.isStopped(recordingTrackId),
     ),
     onStatusChange: auditProviderInitiatedLeave,
     logError: (error, message) => app.log.error(error, message),
   });
   app.decorate("botSessionManager", botSessionManager);
   app.decorate("transcriptBus", transcriptBus);
+  app.decorate("recordingControl", recordingControl);
   app.addHook("onClose", async () => botSessionManager.shutdown());
 
   await app.register(cors, { origin: env.APP_URL, credentials: true });
@@ -136,9 +145,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   await app.register(authRoutes);
   await app.register(meetingRoutes);
-  await app.register(recordingWsRoutes, { chunkStore, asrProvider, transcriptBus });
+  await app.register(recordingWsRoutes, {
+    chunkStore,
+    asrProvider,
+    transcriptBus,
+    uploadAuthorizer: options.uploadAuthorizer ?? new PrismaUploadAuthorizer(),
+    recordingControl,
+  });
   await app.register(transcriptWsRoutes, { transcriptBus });
   await app.register(botSessionRoutes, { manager: botSessionManager, provider: meetingBotProvider });
+  await app.register(recordingSessionRoutes, { manager: botSessionManager, control: recordingControl });
 
   return app;
 }

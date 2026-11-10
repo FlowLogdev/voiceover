@@ -44,6 +44,18 @@
         background: #6366f1;
         border-color: #6366f1;
       }
+      .consent {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        margin-bottom: 12px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: #cbd5e1;
+      }
+      .consent[hidden] {
+        display: none;
+      }
       #error {
         margin-top: 10px;
         color: #f87171;
@@ -80,6 +92,10 @@
   <body>
     <h1>VoiceOver AI</h1>
     <div id="status">Not recording</div>
+    <label id="consent-row" class="consent">
+      <input type="checkbox" id="consent" />
+      <span id="consent-text"></span>
+    </label>
     <div class="row">
       <button id="start" class="primary">Start</button>
       <button id="pause" disabled>Pause</button>

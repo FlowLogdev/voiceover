@@ -42,11 +42,23 @@ export interface BotEventSink {
   onAudio(sessionId: string, providerBotId: string, frame: BotAudioFrame): void;
 }
 
+/**
+ * Default disclosure a bot must make on joining. Adapters MUST surface
+ * `JoinMeetingRequest.recordingNotice` to participants as soon as the bot is
+ * admitted (in-meeting chat message, and the provider's recording-notice /
+ * "this meeting is being recorded" banner where the platform offers one).
+ */
+export const BOT_RECORDING_ANNOUNCEMENT =
+  "This meeting is being recorded and transcribed by VoiceOver AI on behalf of a participant. " +
+  "If you do not consent, tell the organizer and they can remove the notetaker.";
+
 export interface JoinMeetingRequest {
   sessionId: string;
   meetingUrl: string;
   platform: MeetingPlatform;
   botName: string;
+  /** Disclosure the provider adapter must show participants on admission (see BOT_RECORDING_ANNOUNCEMENT). */
+  recordingNotice: string;
 }
 
 /**

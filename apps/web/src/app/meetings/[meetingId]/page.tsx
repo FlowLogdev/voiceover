@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import type { BotSessionDTO, BotStatusDTO, SessionResponse } from "@voiceover/types";
+import {
+  RECORDING_CONSENT_NOTICE,
+  type BotSessionDTO,
+  type BotStatusDTO,
+  type RecordingConsentDTO,
+  type SessionResponse,
+} from "@voiceover/types";
 import { api, ApiError } from "@/lib/api-client";
 
 const WS_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000").replace(/^http/, "ws");
@@ -79,12 +85,22 @@ export default function MeetingPage() {
   const [joinAt, setJoinAt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [consented, setConsented] = useState(false);
+  const [consents, setConsents] = useState<RecordingConsentDTO[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const orgId = session?.activeOrganizationId ?? null;
+  const consentInEffect = consents.some((c) => c.revokedAt === null);
+  const consent = { attested: true as const, noticeVersion: RECORDING_CONSENT_NOTICE.version };
 
   const refresh = useCallback(async () => {
     if (!orgId) return;
-    setBotSessions(await api.listBotSessions(orgId, meetingId));
+    const [bots, consentRows] = await Promise.all([
+      api.listBotSessions(orgId, meetingId),
+      api.listConsents(orgId, meetingId),
+    ]);
+    setBotSessions(bots);
+    setConsents(consentRows);
   }, [orgId, meetingId]);
 
   useEffect(() => {
@@ -116,12 +132,49 @@ export default function MeetingPage() {
       await api.inviteBot(orgId, meetingId, {
         meetingUrl,
         joinAt: joinAt ? new Date(joinAt).toISOString() : undefined,
+        consent,
       });
       setMeetingUrl("");
       setJoinAt("");
+      setConsented(false);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to invite bot");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onStartBrowserRecording() {
+    if (!orgId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const recording = await api.startRecording(orgId, meetingId, { consent });
+      const track = recording.tracks[0]!;
+      router.push(`/recorder/${track.id}?org=${orgId}&session=${recording.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start recording");
+      setBusy(false);
+    }
+  }
+
+  async function onRevoke() {
+    if (!orgId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api.revokeConsent(orgId, meetingId);
+      const stopped = result.stoppedBotSessions + result.stoppedBrowserSessions;
+      setNotice(
+        `Consent withdrawn. Stopped ${stopped} recording${stopped === 1 ? "" : "s"}.` +
+          (result.botLeaveFailures.length > 0
+            ? ` ${result.botLeaveFailures.length} bot(s) could not be removed by the provider: their audio is no longer stored, but remove them from the call manually.`
+            : ""),
+      );
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to withdraw consent");
     } finally {
       setBusy(false);
     }
@@ -152,6 +205,20 @@ export default function MeetingPage() {
       </p>
 
       {error && <p className="mb-4 rounded-md border border-red-900 bg-red-950/40 p-3 text-sm text-red-300">{error}</p>}
+      {notice && <p className="mb-4 rounded-md border border-emerald-900 bg-emerald-950/40 p-3 text-sm text-emerald-300">{notice}</p>}
+
+      {consentInEffect && (
+        <section className="mb-6 flex items-center justify-between rounded-md border border-red-900/60 p-4">
+          <p className="text-sm text-slate-300">Recording consent is in effect for this meeting.</p>
+          <button
+            onClick={() => void onRevoke()}
+            disabled={busy}
+            className="rounded-md bg-red-700 px-4 py-2 text-sm font-medium hover:bg-red-600 disabled:opacity-50"
+          >
+            Stop all recording &amp; withdraw consent
+          </button>
+        </section>
+      )}
 
       {active ? (
         <section className="rounded-md border border-slate-700 p-4">
@@ -197,13 +264,37 @@ export default function MeetingPage() {
               className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2"
             />
           </label>
-          <button
-            type="submit"
-            disabled={busy || !orgId}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-50"
-          >
-            Send bot
-          </button>
+          <label className="flex items-start gap-2 rounded-md border border-slate-800 p-3 text-sm text-slate-300">
+            <input
+              type="checkbox"
+              required
+              checked={consented}
+              onChange={(e) => setConsented(e.target.checked)}
+              className="mt-1"
+            />
+            <span>{RECORDING_CONSENT_NOTICE.text}</span>
+          </label>
+          <p className="text-xs text-slate-500">
+            The bot announces in the meeting that it is recording, and anyone in your organization can stop it.
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="submit"
+              disabled={busy || !orgId || !consented}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-50"
+            >
+              Send bot
+            </button>
+            <button
+              type="button"
+              onClick={() => void onStartBrowserRecording()}
+              disabled={busy || !orgId || !consented}
+              title="Starts a server-issued browser recording and opens the synthetic-audio test recorder"
+              className="rounded-md border border-slate-700 px-4 py-2 text-sm hover:bg-slate-900 disabled:opacity-50"
+            >
+              Test browser recording
+            </button>
+          </div>
         </form>
       )}
 

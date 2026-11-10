@@ -11,7 +11,9 @@ import {
   type MeetingBotProvider,
 } from "@voiceover/meeting-bot";
 import { createBotSessionRequestSchema, type BotSessionDTO } from "@voiceover/types";
+import { httpError } from "../http-error.js";
 import { requireAuth, requireOrganization, type AuthContext } from "../plugins/auth-context.js";
+import { assertCurrentNotice, consentCreateData } from "../recording/consent.js";
 import {
   BOT_TRACK,
   NON_TERMINAL_BOT_STATUSES,
@@ -29,10 +31,6 @@ const PAST_JOIN_TOLERANCE_MS = 5 * 60 * 1000;
 const orgParams = z.object({ organizationId: z.string().uuid() });
 const meetingParams = orgParams.extend({ meetingId: z.string().uuid() });
 const sessionParams = orgParams.extend({ sessionId: z.string().uuid() });
-
-function httpError(statusCode: number, message: string): Error {
-  return Object.assign(new Error(message), { statusCode });
-}
 
 function toDTO(row: SessionRow): BotSessionDTO {
   const record = toBotSessionRecord(row);
@@ -77,6 +75,7 @@ export async function botSessionRoutes(
     const { organizationId, meetingId } = meetingParams.parse(request.params);
     requireMember(auth, organizationId);
     const body = createBotSessionRequestSchema.parse(request.body);
+    assertCurrentNotice(body.consent);
 
     let parsedUrl;
     try {
@@ -120,7 +119,24 @@ export async function botSessionRoutes(
           botMeetingUrl: parsedUrl.normalizedUrl,
           botName: body.botName ?? DEFAULT_BOT_NAME,
           botScheduledJoinAt: scheduledJoinAt,
+          startedByUserId: auth.userId,
           tracks: { create: { sourceTrack: BOT_TRACK, storagePrefix: `recordings/${sessionId}/${BOT_TRACK}` } },
+        },
+      }),
+      prisma.recordingConsent.create({
+        data: consentCreateData({ meetingId, recordingSessionId: sessionId, userId: auth.userId, consent: body.consent }),
+      }),
+      prisma.auditLog.create({
+        data: {
+          organizationId,
+          userId: auth.userId,
+          action: "CONSENT_GRANTED",
+          metadata: {
+            meetingId,
+            recordingSessionId: sessionId,
+            basis: "ORGANIZER_ATTESTATION",
+            noticeVersion: body.consent.noticeVersion,
+          },
         },
       }),
       prisma.meeting.update({

@@ -4,6 +4,7 @@ import { InMemoryBotSessionRepository } from "./in-memory-repository.js";
 import type { BotStatus } from "./lifecycle.js";
 import { AdmissionRetryPolicy } from "./retry-policy.js";
 import { BotLeaveError, BotSessionManager, MAX_TIMER_STEP_MS, type BotStatusChange } from "./session-manager.js";
+import { BOT_RECORDING_ANNOUNCEMENT } from "./types.js";
 import { TestDoubleMeetingBotProvider, type TestDoubleBotScenario } from "./test-double-provider.js";
 import type { BotAudioFrame, BotSessionRecord } from "./types.js";
 
@@ -73,6 +74,15 @@ function newSession(repository: InMemoryBotSessionRepository, overrides: Partial
 }
 
 describe("BotSessionManager", () => {
+  it("hands the provider the recording disclosure on every join attempt", async () => {
+    const { repository, manager, provider } = setup();
+    const session = newSession(repository);
+    await manager.start(session.id);
+    expect(provider.joinRequests).toHaveLength(1);
+    expect(provider.joinRequests[0]).toMatchObject({ sessionId: session.id, recordingNotice: BOT_RECORDING_ANNOUNCEMENT });
+    expect(BOT_RECORDING_ANNOUNCEMENT).toMatch(/recorded and transcribed/);
+  });
+
   it("joins immediately, passes through the waiting room, and streams in-call audio to the sink", async () => {
     const { timers, repository, manager, audio, statuses } = setup();
     const session = newSession(repository);

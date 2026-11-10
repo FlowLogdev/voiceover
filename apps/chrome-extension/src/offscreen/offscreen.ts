@@ -58,6 +58,15 @@ async function initCapture(streamId: string, recordingTrackId: string, wsUrl: st
       });
     }
   });
+  transport.onTerminalClose((code, reason) => {
+    void stopCapture().then(() =>
+      reportStatus({
+        state: "error",
+        startedAt: null,
+        error: `Recording stopped by the server (${code}${reason ? `: ${reason}` : ""})`,
+      }),
+    );
+  });
   uploader = new ResumableUploader({ transport, buffer: chunkBuffer });
   sequenceNumber = 0;
   elapsedMs = 0;

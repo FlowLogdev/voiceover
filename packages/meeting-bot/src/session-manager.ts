@@ -1,6 +1,7 @@
 import { canTransition, isTerminalBotStatus, type BotStatus } from "./lifecycle.js";
 import { AdmissionRetryPolicy } from "./retry-policy.js";
 import {
+  BOT_RECORDING_ANNOUNCEMENT,
   systemTimers,
   type BotAudioFrame,
   type BotAudioSink,
@@ -39,6 +40,8 @@ export interface BotSessionManagerOptions {
   audioSink: BotAudioSink;
   timers?: Timers;
   retryPolicy?: AdmissionRetryPolicy;
+  /** Disclosure passed to every join; defaults to BOT_RECORDING_ANNOUNCEMENT. */
+  recordingNotice?: string;
   /** Fired after every persisted status change (audit log, live UI, metrics). Errors are logged, not rethrown. */
   onStatusChange?: (change: BotStatusChange) => void | Promise<void>;
   logError?: (error: unknown, message: string) => void;
@@ -78,6 +81,7 @@ export class BotSessionManager {
   private readonly audioSink: BotAudioSink;
   private readonly timers: Timers;
   private readonly retryPolicy: AdmissionRetryPolicy;
+  private readonly recordingNotice: string;
   private readonly onStatusChange?: BotSessionManagerOptions["onStatusChange"];
   private readonly logError: (error: unknown, message: string) => void;
 
@@ -93,6 +97,7 @@ export class BotSessionManager {
     this.audioSink = options.audioSink;
     this.timers = options.timers ?? systemTimers;
     this.retryPolicy = options.retryPolicy ?? new AdmissionRetryPolicy();
+    this.recordingNotice = options.recordingNotice ?? BOT_RECORDING_ANNOUNCEMENT;
     this.onStatusChange = options.onStatusChange;
     this.logError = options.logError ?? ((error, message) => console.error(message, error));
 
@@ -306,6 +311,7 @@ export class BotSessionManager {
         meetingUrl: joining.meetingUrl,
         platform: joining.platform,
         botName: joining.botName,
+        recordingNotice: this.recordingNotice,
       });
       return await this.repository.update(joining.id, { providerBotId });
     } catch (error) {

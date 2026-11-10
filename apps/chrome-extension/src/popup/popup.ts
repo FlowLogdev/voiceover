@@ -1,3 +1,4 @@
+import { RECORDING_CONSENT_NOTICE } from "@voiceover/types";
 import type { CaptureStatus, PopupRequest } from "../shared/messages.js";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -6,6 +7,11 @@ const startBtn = document.getElementById("start") as HTMLButtonElement;
 const pauseBtn = document.getElementById("pause") as HTMLButtonElement;
 const stopBtn = document.getElementById("stop") as HTMLButtonElement;
 const transcriptEl = document.getElementById("transcript") as HTMLDivElement;
+const consentEl = document.getElementById("consent") as HTMLInputElement;
+const consentTextEl = document.getElementById("consent-text") as HTMLSpanElement;
+const consentRowEl = document.getElementById("consent-row") as HTMLLabelElement;
+consentTextEl.textContent = RECORDING_CONSENT_NOTICE.text;
+let lastStatus: CaptureStatus | null = null;
 
 function send(request: PopupRequest): Promise<CaptureStatus> {
   return chrome.runtime.sendMessage(request);
@@ -20,6 +26,7 @@ function formatElapsed(startedAt: number | null): string {
 }
 
 function render(status: CaptureStatus) {
+  lastStatus = status;
   errorEl.textContent = status.error ?? "";
   statusEl.classList.toggle("recording", status.state === "recording");
 
@@ -44,7 +51,10 @@ function render(status: CaptureStatus) {
       break;
   }
 
-  startBtn.disabled = status.state !== "idle" && status.state !== "error";
+  const canStart = status.state === "idle" || status.state === "error";
+  consentRowEl.hidden = !canStart;
+  // Recording cannot start until the user confirms the consent notice.
+  startBtn.disabled = !canStart || !consentEl.checked;
   pauseBtn.disabled = status.state !== "recording" && status.state !== "paused";
   pauseBtn.textContent = status.state === "paused" ? "Resume" : "Pause";
   stopBtn.disabled = status.state === "idle";
@@ -74,7 +84,20 @@ function renderTranscript(lines: CaptureStatus["transcriptLines"]) {
   }
 }
 
-startBtn.addEventListener("click", () => void send({ type: "start" }).then(render));
+consentEl.addEventListener("change", () => {
+  if (lastStatus) render(lastStatus);
+});
+startBtn.addEventListener("click", () => {
+  if (!consentEl.checked) return;
+  const request: PopupRequest = {
+    type: "start",
+    consent: { attested: true, noticeVersion: RECORDING_CONSENT_NOTICE.version },
+  };
+  void send(request).then((status) => {
+    consentEl.checked = false; // confirm again for every recording
+    render(status);
+  });
+});
 pauseBtn.addEventListener("click", () => {
   const request: PopupRequest = pauseBtn.textContent === "Resume" ? { type: "resume" } : { type: "pause" };
   void send(request).then(render);

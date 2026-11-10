@@ -41,10 +41,9 @@ and testable, not just files on disk. Status is tracked honestly in `FEATURE_MAT
 - **Not done**: a live run in an actual Chrome browser (this environment has no GUI
   browser, and `tabCapture` requires a real user gesture) — see
   `docs/testing/chrome-extension-manual-test-plan.md` for the checklist a human needs
-  to run before this is called verified. Also not done: a server-side recording-session/
-  track creation endpoint, so `recordingTrackId` is currently client-generated and the
-  ingestion WebSocket does not yet check tenant/track ownership — tracked in
-  `FEATURE_MATRIX.md`, needed before this touches anything beyond local dev.
+  to run before this is called verified. (The client-generated `recordingTrackId` /
+  missing ownership check gap noted here originally was closed after Phase 4, see
+  "Recording ownership + consent" below.)
 - Explicitly out of scope here, not silently ignored: native Teams/Zoom **desktop app**
   audio (`tabCapture` only sees browser tabs) and real S3-compatible object storage.
 
@@ -133,6 +132,31 @@ and testable, not just files on disk. Status is tracked honestly in `FEATURE_MAT
   API replica, not several; move to BullMQ delayed jobs in `apps/worker`);
   `TranscriptBus` is likewise single-process; transcript persistence and finalisation
   (Phase 5).
+
+## Recording ownership + consent (between Phases 4 and 5)
+Closed two gaps in already-shipped code before connecting any real provider:
+- **Upload ownership.** Browser recordings now start with
+  `POST /organizations/:org/meetings/:meeting/recording-sessions`, which issues the
+  session + track ids server-side (the extension used to mint its own UUID, and the
+  upload socket accepted audio for any track id from any logged-in user). The socket
+  now checks, per connection: server-issued BROWSER track (bot tracks are
+  server-written only), live meeting, caller still MEMBER+ in that org, caller is the
+  user who started the session, session still RECORDING/PAUSED, consent in effect;
+  and every frame's `sourceTrack` must match the track. Cross-org and unknown ids get
+  the same 4004, so ids can't be probed. A DB failure fails closed (1011). Stop ends
+  the session and closes live sockets immediately.
+- **Consent.** Nothing read or wrote `RecordingConsent` before. Now every recording
+  (browser or bot) requires an explicit attestation against a versioned notice
+  (`RECORDING_CONSENT_NOTICE` in `@voiceover/types`; outdated versions rejected), shown
+  as a required checkbox in the web app and extension popup, stored with the session
+  and audited. Any org member, guests included, can withdraw consent for a meeting,
+  which stops everything recording on it at once (browser sockets closed, bots
+  removed, bot audio dropped server-side even if the provider fails to remove the bot).
+  Bots are handed a `recordingNotice` to post on joining. The extension also now
+  stops capturing when the server closes its upload (it used to keep buffering).
+- **Not done:** per-participant consent, jurisdiction-aware rules, deleting captured
+  audio on revocation; the notice wording needs legal review. In-process live-socket
+  cut-off needs Redis pub/sub for multiple API replicas (same as `TranscriptBus`).
 
 ## Phase 5 — Unified persistence, playback, diarization
 - `recording_sessions`/`recording_tracks` finalization job in `apps/worker`.

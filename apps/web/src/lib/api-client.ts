@@ -6,6 +6,10 @@ import type {
   MeetingSummaryDTO,
   BotSessionDTO,
   CreateBotSessionRequest,
+  CreateRecordingSessionRequest,
+  RecordingConsentDTO,
+  RecordingSessionDTO,
+  RevokeConsentResponse,
 } from "@voiceover/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -65,6 +69,21 @@ export const api = {
     }),
   removeBot: (organizationId: string, sessionId: string) =>
     request<BotSessionDTO>(`/organizations/${organizationId}/bot-sessions/${sessionId}/leave`, {
+      method: "POST",
+    }),
+  startRecording: (organizationId: string, meetingId: string, body: CreateRecordingSessionRequest) =>
+    request<RecordingSessionDTO>(`/organizations/${organizationId}/meetings/${meetingId}/recording-sessions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  stopRecording: (organizationId: string, sessionId: string) =>
+    request<RecordingSessionDTO>(`/organizations/${organizationId}/recording-sessions/${sessionId}/stop`, {
+      method: "POST",
+    }),
+  listConsents: (organizationId: string, meetingId: string) =>
+    request<RecordingConsentDTO[]>(`/organizations/${organizationId}/meetings/${meetingId}/consents`),
+  revokeConsent: (organizationId: string, meetingId: string) =>
+    request<RevokeConsentResponse>(`/organizations/${organizationId}/meetings/${meetingId}/consents/revoke`, {
       method: "POST",
     }),
 };

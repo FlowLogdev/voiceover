@@ -16,7 +16,8 @@ export interface CaptureStatus {
 
 // popup -> background
 export type PopupRequest =
-  | { type: "start" }
+  /** `consent`: the user ticked the RECORDING_CONSENT_NOTICE confirmation in the popup. */
+  | { type: "start"; consent: { attested: true; noticeVersion: string } }
   | { type: "pause" }
   | { type: "resume" }
   | { type: "stop" }
