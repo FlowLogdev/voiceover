@@ -10,6 +10,7 @@ import {
   type SessionResponse,
 } from "@voiceover/types";
 import { api, ApiError } from "@/lib/api-client";
+import { MeetingRecording } from "./meeting-recording";
 
 const WS_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000").replace(/^http/, "ws");
 const ACTIVE: BotStatusDTO[] = ["SCHEDULED", "JOINING", "WAITING_ROOM", "IN_CALL"];
@@ -88,6 +89,7 @@ export default function MeetingPage() {
   const [consented, setConsented] = useState(false);
   const [consents, setConsents] = useState<RecordingConsentDTO[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [title, setTitle] = useState<string | null>(null);
 
   const orgId = session?.activeOrganizationId ?? null;
   const consentInEffect = consents.some((c) => c.revokedAt === null);
@@ -115,6 +117,11 @@ export default function MeetingPage() {
   useEffect(() => {
     void refresh().catch((err) => setError(err instanceof Error ? err.message : "Failed to load bot sessions"));
   }, [refresh]);
+
+  useEffect(() => {
+    if (!orgId) return;
+    api.getMeeting(orgId, meetingId).then((m) => setTitle(m.title), () => {});
+  }, [orgId, meetingId]);
 
   // Status changes come from the provider asynchronously; poll while a bot is active.
   useEffect(() => {
@@ -198,7 +205,17 @@ export default function MeetingPage() {
       <a href="/dashboard" className="text-sm text-slate-400 hover:text-slate-200">
         ← Dashboard
       </a>
-      <h1 className="mb-1 mt-4 text-2xl font-semibold">Meeting bot</h1>
+      <h1 className="mb-6 mt-4 text-2xl font-semibold">{title ?? "Meeting"}</h1>
+
+      {orgId && (
+        <MeetingRecording
+          organizationId={orgId}
+          meetingId={meetingId}
+          refreshKey={botSessions.map((s) => `${s.id}:${s.status}`).join(",")}
+        />
+      )}
+
+      <h2 className="mb-1 text-lg font-medium">Meeting bot</h2>
       <p className="mb-6 text-sm text-amber-300/80">
         Test-double bot provider: no real meeting is joined. The bot&apos;s lifecycle is simulated and its
         audio is synthetic, so the transcript text is placeholder output.

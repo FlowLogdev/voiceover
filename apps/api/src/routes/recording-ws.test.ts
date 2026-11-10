@@ -6,6 +6,7 @@ import { issueSessionToken, SESSION_COOKIE_NAME } from "@voiceover/auth";
 import type { ServerMessage } from "@voiceover/types";
 import { buildApp } from "../app.js";
 import { InMemoryChunkStore } from "../recording/chunk-store.js";
+import { InMemoryTranscriptStore } from "../recording/transcript-store.js";
 import type { UploadAuthorization, UploadAuthorizer } from "../recording/upload-authorizer.js";
 
 /**
@@ -86,7 +87,7 @@ describe("recording audio WebSocket ingestion", () => {
     process.env.SESSION_SECRET = SESSION_SECRET;
     chunkStore = new InMemoryChunkStore();
     authorizer = new FakeUploadAuthorizer();
-    app = await buildApp({ chunkStore, uploadAuthorizer: authorizer });
+    app = await buildApp({ chunkStore, uploadAuthorizer: authorizer, transcriptStore: new InMemoryTranscriptStore() });
     const address = await app.listen({ port: 0, host: "127.0.0.1" });
     baseUrl = address.replace("http://", "ws://");
 

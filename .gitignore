@@ -15,3 +15,6 @@ coverage/
 packages/database/generated/
 infra/docker/volumes/
 .claude/
+
+# Local recorded-audio store (placeholder for object storage)
+.data/

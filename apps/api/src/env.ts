@@ -1,12 +1,20 @@
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+
+/**
+ * Repo-root `.data/audio`, resolved from this file (src/ and dist/ sit at the
+ * same depth), so the API and the worker share one store by default whatever
+ * directory each is started from. Set AUDIO_STORAGE_DIR to override.
+ */
+const DEFAULT_AUDIO_STORAGE_DIR = fileURLToPath(new URL("../../../.data/audio", import.meta.url));
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(4000),
   SESSION_SECRET: z.string().min(16).default("dev-only-insecure-secret-change-me-please"),
   APP_URL: z.string().default("http://localhost:3000"),
-  // Local-disk placeholder for S3-compatible storage — see prisma-file-chunk-store.ts.
-  AUDIO_STORAGE_DIR: z.string().default("./.data/audio-chunks"),
+  // Local-disk placeholder for S3-compatible storage (see @voiceover/storage).
+  AUDIO_STORAGE_DIR: z.string().default(DEFAULT_AUDIO_STORAGE_DIR),
   // Only "test-double" has an adapter so far; empty/unset means test-double.
   MEETING_BOT_PROVIDER: z.string().optional(),
 });
@@ -19,7 +27,7 @@ function computeEnv(): Env {
     PORT: process.env.PORT,
     SESSION_SECRET: process.env.SESSION_SECRET,
     APP_URL: process.env.APP_URL,
-    AUDIO_STORAGE_DIR: process.env.AUDIO_STORAGE_DIR,
+    AUDIO_STORAGE_DIR: process.env.AUDIO_STORAGE_DIR || undefined,
     MEETING_BOT_PROVIDER: process.env.MEETING_BOT_PROVIDER || undefined,
   });
 }

@@ -10,6 +10,32 @@ import { TestDoubleAsrProvider } from "@voiceover/transcription";
 import { BotIngestionSink } from "../meeting-bot/bot-audio-sink.js";
 import { InMemoryChunkStore } from "./chunk-store.js";
 import { TrackIngestion, TranscriptBus, type TranscriptMessage } from "./track-ingestion.js";
+import { InMemoryTranscriptStore, type FinalTranscript, type TranscriptStore } from "./transcript-store.js";
+import type { AsrEvent, AsrProvider, AsrSession } from "@voiceover/transcription";
+
+/** An ASR double that emits whatever events a test scripts, one batch per pushed chunk. */
+function scriptedAsr(batches: AsrEvent[][]): AsrProvider {
+  return {
+    name: "scripted",
+    createSession(): AsrSession {
+      let listener: ((event: AsrEvent) => void) | null = null;
+      let index = 0;
+      return {
+        onEvent: (cb) => {
+          listener = cb;
+        },
+        pushAudio: () => {
+          for (const event of batches[index++] ?? []) listener?.(event);
+        },
+        finalize: () => {},
+      };
+    },
+  };
+}
+
+function final(segmentId: string, text: string, extra: Partial<FinalTranscript> = {}): AsrEvent {
+  return { type: "final", segmentId, sourceTrack: "remote_tab", startMs: 0, endMs: 1000, text, languageCode: "en", ...extra };
+}
 
 function loudFrame(sequenceNumber: number) {
   const samples = new Float32Array(1600).map((_, i) => (i % 2 === 0 ? 0.8 : -0.8));
@@ -77,6 +103,54 @@ describe("TrackIngestion", () => {
     const tampered = { ...loudFrame(1), checksum: "00000000" };
     expect(await ingestion.ingest(tampered)).toEqual({ ok: false, error: "Checksum mismatch for sequence 1" });
     expect(chunkStore.sequencesFor("track-a")).toEqual([0]);
+  });
+});
+
+describe("TrackIngestion transcript persistence", () => {
+  it("persists final segments only, in order, tagged with the ASR provider, keeping speaker labels", async () => {
+    const store = new InMemoryTranscriptStore();
+    const ingestion = new TrackIngestion("track-p", {
+      chunkStore: new InMemoryChunkStore(),
+      asrProvider: scriptedAsr([
+        [{ type: "partial", segmentId: "s1", sourceTrack: "remote_tab", startMs: 0, endMs: 500, text: "hel", languageCode: "en" }],
+        [final("s1", "hello", { speakerLabel: "0" }), final("s2", "hola", { languageCode: "es", startMs: 1000, endMs: 2000 })],
+        [final("s1", "hello there", { speakerLabel: "0" })], // provider revises a final
+      ]),
+      transcriptBus: new TranscriptBus(),
+      transcriptStore: store,
+    });
+    for (let i = 0; i < 3; i++) await ingestion.ingest(loudFrame(i));
+    await ingestion.flushed();
+
+    const saved = store.forTrack("track-p");
+    expect(saved.map((s) => [s.segmentId, s.text, s.revision])).toEqual([
+      ["s1", "hello there", 2],
+      ["s2", "hola", 1],
+    ]);
+    expect(saved[0]).toMatchObject({ provider: "scripted", speakerLabel: "0", sourceTrack: "remote_tab" });
+    expect(saved[1]).toMatchObject({ languageCode: "es", startMs: 1000 });
+  });
+
+  it("keeps the live feed going and reports the error when persisting fails", async () => {
+    const failing: TranscriptStore = { saveFinal: async () => Promise.reject(new Error("db down")) };
+    const errors: string[] = [];
+    const ingestion = new TrackIngestion("track-f", {
+      chunkStore: new InMemoryChunkStore(),
+      asrProvider: scriptedAsr([[final("s1", "a")], [final("s2", "b")]]),
+      transcriptBus: new TranscriptBus(),
+      transcriptStore: failing,
+      logError: (error, message) => errors.push(`${message}: ${(error as Error).message}`),
+    });
+    const live: string[] = [];
+    ingestion.onTranscript((m) => live.push(m.type));
+    await ingestion.ingest(loudFrame(0));
+    await ingestion.ingest(loudFrame(1));
+    await ingestion.flushed();
+    expect(live).toEqual(["transcript.final", "transcript.final"]);
+    expect(errors).toEqual([
+      "Failed to persist transcript segment s1: db down",
+      "Failed to persist transcript segment s2: db down",
+    ]);
   });
 });
 

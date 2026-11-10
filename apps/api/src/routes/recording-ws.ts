@@ -5,6 +5,7 @@ import type { AsrProvider } from "@voiceover/transcription";
 import { clientMessageSchema, type ServerMessage } from "@voiceover/types";
 import type { ChunkStore } from "../recording/chunk-store.js";
 import type { RecordingControl } from "../recording/recording-control.js";
+import type { TranscriptStore } from "../recording/transcript-store.js";
 import { TrackIngestion, type TranscriptBus } from "../recording/track-ingestion.js";
 import type { UploadAuthorizer } from "../recording/upload-authorizer.js";
 import { env } from "../env.js";
@@ -26,6 +27,7 @@ export async function recordingWsRoutes(
     chunkStore: ChunkStore;
     asrProvider: AsrProvider;
     transcriptBus: TranscriptBus;
+    transcriptStore: TranscriptStore;
     uploadAuthorizer: UploadAuthorizer;
     recordingControl: RecordingControl;
   },
@@ -45,8 +47,11 @@ export async function recordingWsRoutes(
       // connection: the same TrackIngestion the meeting bot path uses.
       // Transcription runs against a deterministic test double, not a real
       // ASR provider (ARCHITECTURE.md section 5). Transcript segments are
-      // relayed live only, not yet persisted (Phase 5).
-      const ingestion = new TrackIngestion(recordingTrackId, options);
+      // relayed live; finals are also persisted (TranscriptStore).
+      const ingestion = new TrackIngestion(recordingTrackId, {
+        ...options,
+        logError: (error, message) => request.log.error(error, message),
+      });
       ingestion.onTranscript((message) => sendMessage(message));
 
       let expectedSourceTrack: string | null = null;

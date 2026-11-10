@@ -14,7 +14,7 @@ tested versus scaffolded versus blocked on external credentials.
 ```
 apps/web               Next.js App Router — marketing site + authenticated dashboard
 apps/api               Fastify API — REST + authenticated WebSocket, long-running process
-apps/worker            BullMQ worker — ASR orchestration, diarization, AI analysis, exports
+apps/worker            Background worker — recording finalization today (Postgres-leased jobs, see IMPLEMENTATION_PLAN Phase 5); later AI analysis, exports
 apps/chrome-extension  Manifest V3 extension — tabCapture, offscreen doc, live transcript UI
 packages/database      Prisma schema, migrations, seed data, tenant-scoped query helpers
 packages/types         Shared TypeScript types/DTOs/zod schemas used by web/api/worker/extension
@@ -22,6 +22,7 @@ packages/auth          Session/JWT helpers, RBAC policy checks, tenant context
 packages/ai            LLM provider adapter (OpenAI/Anthropic), prompt templates, structured output
 packages/transcription ASR provider adapter interface + implementations, diarization glue
 packages/audio         Audio chunking, VAD, resampling, format conversion shared by extension/worker
+packages/storage       ObjectStore interface + local-disk implementation (S3 adapter later) for recorded audio
 packages/meeting-bot   MeetingBotProvider contract, bot lifecycle/retry/scheduling (BotSessionManager), test double
 packages/ui            Shared design-system components (shadcn/ui based)
 packages/config        Shared eslint/tsconfig/tailwind config

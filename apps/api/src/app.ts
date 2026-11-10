@@ -26,6 +26,9 @@ import { BotIngestionSink } from "./meeting-bot/bot-audio-sink.js";
 import { PrismaBotSessionRepository } from "./meeting-bot/prisma-bot-session-repository.js";
 import { TrackIngestion, TranscriptBus } from "./recording/track-ingestion.js";
 import { PrismaFileChunkStore } from "./recording/prisma-file-chunk-store.js";
+import { PrismaTranscriptStore, type TranscriptStore } from "./recording/transcript-store.js";
+import { meetingDetailRoutes } from "./routes/meeting-detail.js";
+import { LocalDiskObjectStore, type ObjectStore } from "@voiceover/storage";
 import type { ChunkStore } from "./recording/chunk-store.js";
 import { env } from "./env.js";
 
@@ -50,6 +53,10 @@ export interface BuildAppOptions {
   meetingBotProvider?: MeetingBotProvider;
   botSessionRepository?: BotSessionRepository;
   botRetryPolicy?: AdmissionRetryPolicy;
+  /** Recorded audio (chunks, playback files). Defaults to local disk at AUDIO_STORAGE_DIR. */
+  objectStore?: ObjectStore;
+  /** Final transcript segments. Defaults to Postgres. */
+  transcriptStore?: TranscriptStore;
   /** Who may upload to which browser-capture track. Defaults to the Prisma-backed ownership check. */
   uploadAuthorizer?: UploadAuthorizer;
 }
@@ -96,7 +103,9 @@ async function auditProviderInitiatedLeave({ previous, session }: BotStatusChang
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: true });
-  const chunkStore = options.chunkStore ?? new PrismaFileChunkStore(env.AUDIO_STORAGE_DIR);
+  const objectStore = options.objectStore ?? new LocalDiskObjectStore(env.AUDIO_STORAGE_DIR);
+  const chunkStore = options.chunkStore ?? new PrismaFileChunkStore(objectStore);
+  const transcriptStore = options.transcriptStore ?? new PrismaTranscriptStore();
   // No real streaming ASR provider is selected/provisioned yet (see
   // ARCHITECTURE.md section 5) — this is a deterministic test double, not
   // real transcription. Swap behind the same AsrProvider interface once one is.
@@ -109,7 +118,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     repository: options.botSessionRepository ?? new PrismaBotSessionRepository(),
     retryPolicy: options.botRetryPolicy,
     audioSink: new BotIngestionSink(
-      (recordingTrackId) => new TrackIngestion(recordingTrackId, { chunkStore, asrProvider, transcriptBus }),
+      (recordingTrackId) =>
+        new TrackIngestion(recordingTrackId, {
+          chunkStore,
+          asrProvider,
+          transcriptBus,
+          transcriptStore,
+          logError: (error, message) => app.log.error(error, message),
+        }),
       (recordingTrackId) => recordingControl.isStopped(recordingTrackId),
     ),
     onStatusChange: auditProviderInitiatedLeave,
@@ -149,12 +165,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     chunkStore,
     asrProvider,
     transcriptBus,
+    transcriptStore,
     uploadAuthorizer: options.uploadAuthorizer ?? new PrismaUploadAuthorizer(),
     recordingControl,
   });
   await app.register(transcriptWsRoutes, { transcriptBus });
   await app.register(botSessionRoutes, { manager: botSessionManager, provider: meetingBotProvider });
   await app.register(recordingSessionRoutes, { manager: botSessionManager, control: recordingControl });
+  await app.register(meetingDetailRoutes, { objectStore });
 
   return app;
 }

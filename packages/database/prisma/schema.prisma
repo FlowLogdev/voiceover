@@ -289,27 +289,33 @@ model RecordingConsent {
 }
 
 model RecordingSession {
-  id                 String                 @id @default(uuid())
-  meetingId          String
-  method             RecordingMethod
-  status             RecordingSessionStatus @default(PENDING)
-  botProvider        String?
-  botJoinStatus      BotJoinStatus?
+  id                  String                 @id @default(uuid())
+  meetingId           String
+  method              RecordingMethod
+  status              RecordingSessionStatus @default(PENDING)
+  botProvider         String?
+  botJoinStatus       BotJoinStatus?
   // Meeting-bot sessions only (method = BOT). See packages/meeting-bot.
-  botExternalId      String? // provider's bot id for the current join attempt
-  botMeetingUrl      String? // validated + normalised via parseMeetingUrl()
-  botName            String?
-  botScheduledJoinAt DateTime?
-  botJoinAttempts    Int                    @default(0)
-  startedAt          DateTime?
-  pausedAt           DateTime?
-  endedAt            DateTime?
-  failureReason      String?
+  botExternalId       String? // provider's bot id for the current join attempt
+  botMeetingUrl       String? // validated + normalised via parseMeetingUrl()
+  botName             String?
+  botScheduledJoinAt  DateTime?
+  botJoinAttempts     Int                    @default(0)
+  startedAt           DateTime?
+  pausedAt            DateTime?
+  endedAt             DateTime?
+  failureReason       String?
   /// The user who started (or invited the bot for) this recording. For
   /// browser capture, only this user may upload audio to its tracks.
-  startedByUserId    String?
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
+  startedByUserId     String?
+  /// Finalization job (apps/worker): sessions in FINALIZING are claimed by
+  /// setting finalizeLockedUntil (a lease), retried with backoff on failure,
+  /// and end COMPLETE (finalizedAt) or FAILED after too many attempts.
+  finalizeAttempts    Int                    @default(0)
+  finalizeLockedUntil DateTime?
+  finalizedAt         DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
 
   meeting   Meeting            @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   startedBy User?              @relation("RecordingSessionStarter", fields: [startedByUserId], references: [id])
@@ -318,6 +324,7 @@ model RecordingSession {
 
   @@index([meetingId])
   @@index([method, botJoinStatus])
+  @@index([status, finalizeLockedUntil])
   @@map("recording_sessions")
 }
 
@@ -327,6 +334,12 @@ model RecordingTrack {
   sourceTrack        String // "local_mic" | "remote_tab" | "bot_mixed"
   storagePrefix      String
   durationMs         Int?
+  /// Set by finalization: chunks received, gaps filled with silence, and the
+  /// assembled playback file (object-store key, relative to the store root).
+  chunkCount         Int?
+  missingChunkCount  Int?
+  playbackStorageKey String?
+  playbackSampleRate Int?
   createdAt          DateTime @default(now())
 
   recordingSession   RecordingSession    @relation(fields: [recordingSessionId], references: [id], onDelete: Cascade)
@@ -346,6 +359,7 @@ model AudioChunk {
   storageKey       String
   byteSize         Int
   checksum         String
+  sampleRate       Int?
   acknowledgedAt   DateTime?
   createdAt        DateTime  @default(now())
 
@@ -366,37 +380,44 @@ model Speaker {
   label         String // "Speaker 1" by default, renameable
   displayName   String?
   participantId String?
+  /// What this speaker was derived from, unique per meeting: "<trackId>:asr:<provider label>"
+  /// for real diarization, "<trackId>:track" when attributed by capture track only.
+  externalKey   String?
   createdAt     DateTime @default(now())
 
   meeting            Meeting             @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   transcriptSegments TranscriptSegment[]
 
+  @@unique([meetingId, externalKey])
   @@index([meetingId])
   @@map("speakers")
 }
 
 model TranscriptSegment {
-  id               String   @id @default(uuid())
-  meetingId        String
-  speakerId        String?
-  sourceTrack      String
-  recordingTrackId String?
-  startMs          Int
-  endMs            Int
-  text             String
-  languageCode     String
-  confidence       Float?
-  isFinal          Boolean  @default(false)
-  provider         String
-  revisionNumber   Int      @default(1)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                String   @id @default(uuid())
+  meetingId         String
+  speakerId         String?
+  sourceTrack       String
+  recordingTrackId  String?
+  /// The ASR provider's segment id, so a re-delivered final upserts instead of duplicating.
+  externalSegmentId String?
+  startMs           Int
+  endMs             Int
+  text              String
+  languageCode      String
+  confidence        Float?
+  isFinal           Boolean  @default(false)
+  provider          String
+  revisionNumber    Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   meeting        Meeting              @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   speaker        Speaker?             @relation(fields: [speakerId], references: [id])
   recordingTrack RecordingTrack?      @relation("TrackSegments", fields: [recordingTrackId], references: [id])
   revisions      TranscriptRevision[]
 
+  @@unique([recordingTrackId, externalSegmentId])
   @@index([meetingId, startMs])
   @@index([speakerId])
   @@map("transcript_segments")

@@ -6,6 +6,12 @@ export interface TranscriptEventBase {
   text: string;
   languageCode: string;
   confidence?: number;
+  /**
+   * Provider diarization label (e.g. "0", "spk_1"), stable within one ASR
+   * session. Absent when the provider doesn't diarize; speakers are then
+   * attributed by capture track instead.
+   */
+  speakerLabel?: string;
 }
 
 export type AsrEvent =

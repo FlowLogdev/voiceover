@@ -10,9 +10,12 @@ import type {
   RecordingConsentDTO,
   RecordingSessionDTO,
   RevokeConsentResponse,
+  MeetingDetailDTO,
+  MeetingTranscriptDTO,
+  SpeakerDTO,
 } from "@voiceover/types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export class ApiError extends Error {
   constructor(
@@ -82,6 +85,18 @@ export const api = {
     }),
   listConsents: (organizationId: string, meetingId: string) =>
     request<RecordingConsentDTO[]>(`/organizations/${organizationId}/meetings/${meetingId}/consents`),
+  getMeeting: (organizationId: string, meetingId: string) =>
+    request<MeetingDetailDTO>(`/organizations/${organizationId}/meetings/${meetingId}`),
+  getTranscript: (organizationId: string, meetingId: string) =>
+    request<MeetingTranscriptDTO>(`/organizations/${organizationId}/meetings/${meetingId}/transcript`),
+  renameSpeaker: (organizationId: string, meetingId: string, speakerId: string, displayName: string | null) =>
+    request<SpeakerDTO>(`/organizations/${organizationId}/meetings/${meetingId}/speakers/${speakerId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ displayName }),
+    }),
+  /** Same-site cookie auth: usable directly as an <audio> src. */
+  playbackUrl: (organizationId: string, recordingTrackId: string) =>
+    `${API_URL}/organizations/${organizationId}/recording-tracks/${recordingTrackId}/playback`,
   revokeConsent: (organizationId: string, meetingId: string) =>
     request<RevokeConsentResponse>(`/organizations/${organizationId}/meetings/${meetingId}/consents/revoke`, {
       method: "POST",

@@ -11,3 +11,5 @@ export { ChunkBuffer } from "./chunk-buffer.js";
 export type { StoredChunk } from "./chunk-buffer.js";
 export { ResumableUploader } from "./resumable-upload.js";
 export type { UploadTransport } from "./resumable-upload.js";
+export { planTrackAssembly, streamTrackAssembly, TrackAssemblyError } from "./assemble.js";
+export type { AssemblyPiece, ChunkMeta, TrackAssemblyPlan } from "./assemble.js";

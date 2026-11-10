@@ -30,8 +30,10 @@ nothing is marked tested without an actual test run.
 | Transcription | Chrome extension popup renders the live transcript | Implemented awaiting external validation | Build/typecheck clean; relies on the same not-yet-run-in-a-real-browser caveat as the rest of the extension (see Browser capture row above) |
 | Transcription | `apps/web` `/recorder/[trackId]` manual-verification page | Implemented awaiting external validation | Builds, typechecks, server-renders correctly (checked directly). The Chrome browser automation extension was not connected in this environment, so nobody has actually clicked its buttons in a live browser tab — the identical WebSocket protocol was verified via a scripted client instead. |
 | Transcription | Real streaming ASR (EN/ES/PT) | Blocked by external dependency | Needs provider selection + API key — everything above is built against the interface so swapping in a real adapter shouldn't require touching call sites |
-| Transcription | Diarization/speaker attribution | Not implemented | Phase 5, depends on ASR provider capabilities |
-| Transcription | Persisting transcript segments to `TranscriptSegment` | Not implemented | Currently relayed live only, no DB write. Unblocked: every track (browser and bot) is now server-issued and tied to a meeting. Phase 5 |
+| Transcription | Speaker attribution: provider diarization labels -> per-meeting "Speaker N" (one per track+label), else one speaker per capture source ("Microphone" named after the recording user, "Tab audio", "Meeting audio"); rename via `PATCH .../speakers/:id` (MEMBER+) | Implemented awaiting external validation | Plumbing tested end to end with a diarizing ASR double in `meeting-detail.integration.test.ts` (CI only). **No real diarization yet**: the test-double ASR emits no labels, so today every transcript is attributed by source, and the UI says so. Real diarization needs an ASR provider that returns speaker labels (`AsrEvent.speakerLabel`) |
+| Transcription | Persisting final transcript segments (`TranscriptSegment`), idempotent per (track, provider segment id); partials stay live-only; a persistence failure is logged and never interrupts the live feed | Implemented and tested (unit) / awaiting CI (DB) | 2 new DB-free unit tests (finals only, in order, revisions upsert; failure path). Prisma store: `meeting-detail.integration.test.ts` (CI only) |
+| Recording | Finalization worker (`apps/worker`): for each ended session, stream-assembles a playable WAV per track from its chunks (gaps filled with silence so transcript timestamps stay aligned, checksums verified), records duration / chunk / gap counts, rebuilds the meeting's language timeline, marks COMPLETE; Postgres-leased claims (multi-worker safe, crash takeover), settle delay, exponential retry, permanent failures fail fast | Implemented awaiting external validation | Pure parts unit-tested (assembly: ordering, gap alignment, odd bytes, bounded silence blocks, mixed rates; language runs; retry policy). DB orchestration: `finalizer.integration.test.ts`, 6 tests (happy path + idempotent rerun, empty track, settle, 5 concurrent claimers -> 1, lease takeover, retry -> FAILED, corrupt/mixed -> FAILED at once). **CI only** |
+| Recording | Meeting detail API (`GET .../meetings/:id`, `GET .../transcript`), playback streaming with HTTP Range (`GET .../recording-tracks/:id/playback`), web meeting page with synced player/transcript (click-to-seek, playhead highlight), speaker rename, language timeline | Implemented awaiting external validation | Range parsing unit-tested; routes + tenancy in `meeting-detail.integration.test.ts` (CI only). Web page builds/typechecks; not yet clicked through in a real browser. Playback is cookie-authenticated per request; signed object-store URLs are Phase 10 |
 | AI intelligence | Summaries/decisions/action items/risks | Blocked by external dependency | Needs LLM provider key |
 | AI intelligence | Ask VoiceOver (chat + semantic search) | Blocked by external dependency | Needs LLM provider key + pgvector |
 | Integrations | Google/Outlook Calendar | Blocked by external dependency | Needs OAuth credentials |
@@ -47,6 +49,12 @@ nothing is marked tested without an actual test run.
 | Testing | Unit/integration/API/WS/Playwright/extension/billing/security suite | Not implemented | Built alongside each phase, not after |
 
 ## Known, stated limitations (not to be silently glossed over)
+
+- Audio storage is still local disk (`@voiceover/storage` `LocalDiskObjectStore`, default
+  repo-root `.data/audio`), with no encryption at rest. The API and worker must share it
+  (same machine/volume). An S3 adapter implements the same `ObjectStore` interface.
+- Chunks stored before Phase 5 (absolute file paths, no sample rate) are not finalizable;
+  such sessions fail finalization with a clear reason. Dev data only.
 
 - Meeting-bot transcript text is placeholder output from the test-double ASR fed
   *synthetic* audio from the test-double bot provider — no real meeting is joined yet.

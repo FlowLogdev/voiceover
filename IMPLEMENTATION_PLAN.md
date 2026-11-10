@@ -158,10 +158,40 @@ Closed two gaps in already-shipped code before connecting any real provider:
   audio on revocation; the notice wording needs legal review. In-process live-socket
   cut-off needs Redis pub/sub for multiple API replicas (same as `TranscriptBus`).
 
-## Phase 5 — Unified persistence, playback, diarization
-- `recording_sessions`/`recording_tracks` finalization job in `apps/worker`.
-- Synchronized audio player + transcript UI in `apps/web` meeting detail page.
-- Diarization/speaker attribution, speaker rename.
+## Phase 5 — Unified persistence, playback, diarization — done, diarization plumbing only (no real diarizing ASR yet)
+- **Transcript persistence**: `TrackIngestion` (the one ingestion path for browser capture
+  and bots) persists every final segment through a `TranscriptStore`, upserted by
+  (track, provider segment id) so revisions don't duplicate; serialised per track; a
+  persistence failure is logged and never interrupts the live feed.
+- **Speakers**: provider diarization labels (new optional `AsrEvent.speakerLabel`) become
+  per-meeting "Speaker 1, 2, ..."; without labels, one speaker per capture source
+  ("Microphone" is named after the recording user). Rename via
+  `PATCH .../meetings/:id/speakers/:speakerId`. The test-double ASR emits no labels, so
+  in practice attribution is by source until a real provider is chosen, and the UI says so.
+- **Storage**: new `@voiceover/storage` (`ObjectStore`, `LocalDiskObjectStore`): relative,
+  validated keys (no path traversal), atomic writes, streamed writes and ranged reads.
+  Chunk rows now record their sample rate. Default root is repo-root `.data/audio` for
+  both API and worker (it used to be relative to the API's working directory, which the
+  worker couldn't resolve).
+- **Finalization worker** (`apps/worker`, was empty): claims FINALIZING sessions with a
+  lease in Postgres (compare-and-set; any number of workers; crashed claims expire), waits
+  a settle period after the session ends, then per track streams a WAV from the chunks
+  (silence for missing chunks so transcript timestamps stay aligned; checksums verified;
+  never the whole recording in memory), records duration/chunk/gap counts, rebuilds the
+  meeting's language timeline, and marks the session COMPLETE. Transient failures retry
+  with exponential backoff, then FAILED; corrupt or unusable data fails at once.
+  *Deviation from ARCHITECTURE.md*: Postgres leases instead of BullMQ (no Redis in dev or
+  CI, and the job is a property of a row that already exists). Revisit for higher volume.
+- **API**: meeting detail (speakers + tracks with playback status), persisted transcript +
+  language runs, and playback streaming with HTTP Range support, all scoped by organization.
+- **Web**: the meeting page shows players per finalized track, the transcript with speaker
+  names (click a line to seek, the line under the playhead is highlighted), inline
+  speaker rename, the language timeline, and finalization progress.
+- Tests: 21 new unit tests (storage 5, assembly 6, language runs 2, persistence 2,
+  Range 2, retry policy 2, plus updates); integration (CI only): 6 worker, 3 API.
+- **Not done**: real diarization (needs an ASR provider that returns speaker labels);
+  waveform view; speaker -> participant linking; transcript editing (`TranscriptRevision`);
+  S3 storage and signed playback URLs (Phase 10); resampling mixed-rate tracks.
 
 ## Phase 6 — AI meeting intelligence
 - `packages/ai`: LLM adapter, structured-output schemas for summary/decisions/action

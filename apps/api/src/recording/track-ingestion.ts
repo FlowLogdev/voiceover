@@ -2,6 +2,7 @@ import { verifyChunkFrame, type AudioChunkFrame } from "@voiceover/audio";
 import type { AsrEvent, AsrProvider, AsrSession } from "@voiceover/transcription";
 import type { ServerMessage } from "@voiceover/types";
 import type { ChunkStore } from "./chunk-store.js";
+import type { TranscriptStore } from "./transcript-store.js";
 
 export type TranscriptMessage = Extract<
   ServerMessage,
@@ -75,6 +76,15 @@ function toInt16Samples(bytes: Uint8Array): Int16Array {
   return new Int16Array(aligned.buffer);
 }
 
+export interface TrackIngestionDeps {
+  chunkStore: ChunkStore;
+  asrProvider: AsrProvider;
+  transcriptBus: TranscriptBus;
+  /** Final segments are persisted here. Optional so pure pipeline tests can omit it. */
+  transcriptStore?: TranscriptStore;
+  logError?: (error: unknown, message: string) => void;
+}
+
 export type IngestResult = { ok: true; alreadyStored: boolean } | { ok: false; error: string };
 
 /**
@@ -86,11 +96,18 @@ export class TrackIngestion {
   private asrSession: AsrSession | null = null;
   private finalized = false;
   private readonly localListeners = new Set<(message: TranscriptMessage) => void>();
+  /** Persistence is serialised per track so revisions of one segment land in order. */
+  private persistence: Promise<void> = Promise.resolve();
 
   constructor(
     readonly recordingTrackId: string,
-    private readonly deps: { chunkStore: ChunkStore; asrProvider: AsrProvider; transcriptBus: TranscriptBus },
+    private readonly deps: TrackIngestionDeps,
   ) {}
+
+  /** Resolves once every final segment emitted so far has been persisted (or failed and been logged). */
+  flushed(): Promise<void> {
+    return this.persistence;
+  }
 
   /** Listener for this pipeline's own events only (e.g. the uploading socket). */
   onTranscript(listener: (message: TranscriptMessage) => void): void {
@@ -134,6 +151,16 @@ export class TrackIngestion {
     if (!this.asrSession) {
       this.asrSession = this.deps.asrProvider.createSession({ sourceTrack });
       this.asrSession.onEvent((event) => {
+        if (event.type === "final" && this.deps.transcriptStore) {
+          const store = this.deps.transcriptStore;
+          const { type: _type, ...segment } = event;
+          this.persistence = this.persistence
+            .then(() => store.saveFinal(this.recordingTrackId, segment, this.deps.asrProvider.name))
+            .catch((error) =>
+              // Never break the live feed over a persistence failure, but don't hide it either.
+              (this.deps.logError ?? console.error)(error, `Failed to persist transcript segment ${event.segmentId}`),
+            );
+        }
         const message = toTranscriptMessage(event);
         for (const listener of this.localListeners) listener(message);
         this.deps.transcriptBus.publish(this.recordingTrackId, message);

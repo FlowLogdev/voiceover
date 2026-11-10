@@ -45,3 +45,4 @@ jobs:
       - run: pnpm build
       - run: pnpm test
       - run: pnpm --filter @voiceover/api test:integration
+      - run: pnpm --filter @voiceover/worker test:integration
