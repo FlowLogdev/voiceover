@@ -15,16 +15,17 @@
     "@fastify/cookie": "^11.0.1",
     "@fastify/cors": "^10.0.1",
     "@fastify/websocket": "^11.0.2",
+    "@voiceover/ai": "workspace:*",
     "@voiceover/audio": "workspace:*",
     "@voiceover/auth": "workspace:*",
     "@voiceover/database": "workspace:*",
+    "@voiceover/meeting-bot": "workspace:*",
+    "@voiceover/storage": "workspace:*",
     "@voiceover/transcription": "workspace:*",
     "@voiceover/types": "workspace:*",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.0.1",
-    "zod": "^4.6.7",
-    "@voiceover/meeting-bot": "workspace:*",
-    "@voiceover/storage": "workspace:*"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

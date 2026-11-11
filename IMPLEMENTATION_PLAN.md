@@ -198,11 +198,38 @@ Closed two gaps in already-shipped code before connecting any real provider:
   waveform view; speaker -> participant linking; transcript editing (`TranscriptRevision`);
   S3 storage and signed playback URLs (Phase 10); resampling mixed-rate tracks.
 
-## Phase 6 — AI meeting intelligence
-- `packages/ai`: LLM adapter, structured-output schemas for summary/decisions/action
-  items/risks/questions, each citing transcript segment + timestamp.
-- Regeneration, editing, evidence links.
-- pgvector embeddings + cross-meeting semantic search ("Ask VoiceOver").
+## Phase 6 — AI meeting intelligence — done against a test double; the Claude adapter is built but has never been called (no key)
+- `packages/ai`: provider-agnostic `LlmProvider` (`analyzeMeeting`, `answerQuestion`), a
+  Claude adapter on the official SDK (`@anthropic-ai/sdk`, pinned 1.3.0), and a
+  deterministic test double (default; clearly labelled placeholder output, no network).
+  The adapter streams, uses structured outputs (`output_config.format` JSON schema, then
+  re-validated with zod), sends effort explicitly (`high` by default; `LLM_EFFORT`),
+  keeps the system prompt byte-stable and cacheable, and opts into server-side refusal
+  fallbacks (`fallbacks: "default"`); the model that actually answered is recorded.
+  Default model `claude-opus-5-5` (`LLM_MODEL` to override). Refusals, truncation and
+  malformed output become typed errors with a retry decision; an over-long transcript
+  fails instead of being truncated. The transcript is framed as data, not instructions.
+- **Grounding**: the model sees each line as `[S12 0:03:14 Maria] ...` and must cite refs;
+  refs are mapped back to segment ids, and any item whose refs don't resolve is dropped
+  and counted. Every stored insight carries `evidenceSegmentIds`.
+- **Worker**: `AnalysisRunner` runs `MeetingAnalysisRun` jobs (Postgres lease, backoff,
+  fenced completion so a worker that lost its lease can't overwrite). A run is queued
+  automatically when a recording finalizes, or on demand; an advisory lock keeps it to
+  one queued run per meeting. Regeneration replaces AI items nobody touched and keeps
+  edited / user-created items (skipping regenerated duplicates) and an edited summary.
+- **API**: insights with evidence (segment, time, track), queue analysis (202/409/400),
+  edit/check off/delete items and edit the summary (MEMBER+). **Ask VoiceOver**:
+  answers from the org's own transcripts with citations; Postgres full-text retrieval;
+  no model call when nothing matches; per-user rate limit.
+- **Web**: insights panel on the meeting page (evidence chips seek the player, inline
+  edit, check-off, regenerate, run status); `/ask` page; removed the dashboard's stale
+  "live recorder (test)" link, which used a client-made track id the server now refuses.
+- Tests: 12 `packages/ai` + 4 API unit tests; integration (CI only): 5 worker, 3 API.
+- **Not done / blocked**: a real Claude call (needs an API key); embeddings / semantic
+  search (needs an embeddings provider); an org-level AI on/off switch and subprocessor
+  paperwork; creating insights by hand (only edit/delete); a GIN index for full-text
+  search (fine at current volume; add a migration once migrations exist); deleted AI
+  items can reappear on regeneration.
 
 ## Phase 7 — Collaboration, calendar, integrations, exports
 - Google Calendar / Outlook Calendar OAuth, Slack, webhooks.

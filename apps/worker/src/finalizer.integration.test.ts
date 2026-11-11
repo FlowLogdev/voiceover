@@ -137,6 +137,10 @@ describe("RecordingFinalizer (real Postgres)", () => {
     expect(session).toMatchObject({ status: "COMPLETE", finalizeAttempts: 1, finalizeLockedUntil: null });
     expect(session.finalizedAt).not.toBeNull();
     expect((await prisma.meeting.findUniqueOrThrow({ where: { id: meetingId } })).endedAt).toEqual(session.endedAt);
+    // A finished recording with a transcript queues an AI analysis of the meeting.
+    expect(await prisma.meetingAnalysisRun.findMany({ where: { meetingId }, select: { status: true, trigger: true } })).toEqual([
+      { status: "PENDING", trigger: "recording_finalized" },
+    ]);
 
     // Re-running (e.g. a worker that lost its lease mid-way) produces the same result, not duplicates.
     await prisma.recordingSession.update({ where: { id: sessionId }, data: { status: "FINALIZING" } });

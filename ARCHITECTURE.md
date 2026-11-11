@@ -19,7 +19,7 @@ apps/chrome-extension  Manifest V3 extension — tabCapture, offscreen doc, live
 packages/database      Prisma schema, migrations, seed data, tenant-scoped query helpers
 packages/types         Shared TypeScript types/DTOs/zod schemas used by web/api/worker/extension
 packages/auth          Session/JWT helpers, RBAC policy checks, tenant context
-packages/ai            LLM provider adapter (OpenAI/Anthropic), prompt templates, structured output
+packages/ai            LlmProvider contract, Claude adapter (official SDK), test double, prompts, grounded structured output
 packages/transcription ASR provider adapter interface + implementations, diarization glue
 packages/audio         Audio chunking, VAD, resampling, format conversion shared by extension/worker
 packages/storage       ObjectStore interface + local-disk implementation (S3 adapter later) for recorded audio
@@ -94,7 +94,7 @@ storage, transcript, AI analysis, playback, billing — is capture-method-agnost
 | --- | --- | --- |
 | Streaming ASR provider (e.g. Deepgram/AssemblyAI/Google STT) | real-time multilingual transcription | Not selected — needs benchmark against EN/ES/PT + diarization + cost |
 | Meeting bot provider (Recall.ai or equivalent) | bot joins Zoom/Teams/Meet | Not provisioned — needs account + current API validation |
-| LLM provider (OpenAI and/or Anthropic) | summaries, action items, chat | Not provisioned |
+| LLM provider (Anthropic Claude) | summaries, action items, Ask VoiceOver | Adapter built (`packages/ai`), not provisioned: no API key yet. Embeddings provider for semantic search: not selected |
 | Stripe | billing/subscriptions/metering | Not provisioned |
 | Google/Microsoft OAuth | login + calendar integration | Not provisioned |
 | S3-compatible object storage | audio/export storage | MinIO used locally; production bucket not provisioned |

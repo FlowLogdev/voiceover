@@ -4,3 +4,4 @@ export * from "./recording-ws.js";
 export * from "./meeting-bot.js";
 export * from "./recording-consent.js";
 export * from "./meeting-detail.js";
+export * from "./insights.js";

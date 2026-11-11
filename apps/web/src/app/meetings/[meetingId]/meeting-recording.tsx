@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MeetingDetailDTO, MeetingTranscriptDTO, SpeakerDTO } from "@voiceover/types";
 import { api } from "@/lib/api-client";
+import { SEEK_EVENT, type SeekDetail } from "./seek";
 
 const IN_PROGRESS = new Set(["PENDING", "RECORDING", "PAUSED", "STOPPING", "FINALIZING"]);
 const SOURCE_LABEL: Record<string, string> = {
@@ -111,6 +112,20 @@ export function MeetingRecording({
     const id = setInterval(() => void load().catch(() => {}), 5000);
     return () => clearInterval(id);
   }, [busy, load]);
+
+  // Evidence links elsewhere on the page ask for a seek via a window event.
+  useEffect(() => {
+    const onSeek = (event: Event) => {
+      const { recordingTrackId, ms } = (event as CustomEvent<SeekDetail>).detail;
+      const player = players.current.get(recordingTrackId);
+      if (!player) return;
+      player.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      player.currentTime = ms / 1000;
+      void player.play().catch(() => {});
+    };
+    window.addEventListener(SEEK_EVENT, onSeek);
+    return () => window.removeEventListener(SEEK_EVENT, onSeek);
+  }, []);
 
   useEffect(() => {
     activeLine.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });

@@ -1,5 +1,5 @@
 import { fnv1aChecksum, planTrackAssembly, streamTrackAssembly, TrackAssemblyError } from "@voiceover/audio";
-import { prisma } from "@voiceover/database";
+import { enqueueMeetingAnalysis, prisma } from "@voiceover/database";
 import { InvalidStorageKeyError, storageKeys, type ObjectStore } from "@voiceover/storage";
 import { mergeLanguageSegments } from "@voiceover/transcription";
 
@@ -137,6 +137,7 @@ export class RecordingFinalizer {
         data: { status: "COMPLETE", finalizedAt: this.now(), finalizeLockedUntil: null },
       });
       this.log("info", `Finalized recording session ${sessionId}`);
+      await this.queueAnalysis(sessionId);
       return { sessionId, status: "COMPLETE" };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -161,6 +162,17 @@ export class RecordingFinalizer {
       await prisma.recordingSession.update({ where: { id: sessionId }, data: { finalizeLockedUntil: retryAt } });
       this.log("warn", `Finalizing ${sessionId} failed (attempt ${finalizeAttempts}), retrying at ${retryAt.toISOString()}`, error);
       return { sessionId, status: "RETRY", error: message, retryAt };
+    }
+  }
+
+  /** A finished recording means a (possibly longer) transcript: queue an AI analysis. Never fails finalization. */
+  private async queueAnalysis(sessionId: string): Promise<void> {
+    try {
+      const { meetingId } = await prisma.recordingSession.findUniqueOrThrow({ where: { id: sessionId }, select: { meetingId: true } });
+      const result = await enqueueMeetingAnalysis({ meetingId, trigger: "recording_finalized" });
+      if (result.enqueued) this.log("info", `Queued analysis ${result.runId} for meeting ${meetingId}`);
+    } catch (error) {
+      this.log("warn", `Could not queue analysis after finalizing ${sessionId}`, error);
     }
   }
 

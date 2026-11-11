@@ -227,6 +227,7 @@ model Meeting {
   questions          Question[]
   risks              Risk[]
   commitments        Commitment[]
+  analysisRuns       MeetingAnalysisRun[]
   topics             Topic[]
   shares             Share[]
   comments           Comment[]
@@ -455,13 +456,58 @@ model LanguageSegment {
 // AI meeting intelligence
 // ---------------------------------------------------------------------------
 
+enum AnalysisRunStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+enum InsightOrigin {
+  AI
+  USER
+}
+
+/// One AI analysis of a meeting's transcript, run by apps/worker. Claimed with
+/// a lease like recording finalization; PENDING + lockedUntil in the future
+/// means "waiting to retry".
+model MeetingAnalysisRun {
+  id                String            @id @default(uuid())
+  meetingId         String
+  status            AnalysisRunStatus @default(PENDING)
+  /// "recording_finalized" | "manual"
+  trigger           String
+  requestedByUserId String?
+  provider          String?
+  modelName         String?
+  attempts          Int               @default(0)
+  lockedUntil       DateTime?
+  error             String?
+  segmentCount      Int?
+  /// Items the model produced without resolvable evidence, discarded.
+  droppedItemCount  Int?
+  createdAt         DateTime          @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([status, lockedUntil])
+  @@index([meetingId, createdAt])
+  @@map("meeting_analysis_runs")
+}
+
 model Summary {
-  id          String   @id @default(uuid())
-  meetingId   String
-  kind        String // "executive" | "detailed_timeline"
-  content     String
-  modelName   String
-  generatedAt DateTime @default(now())
+  id            String    @id @default(uuid())
+  meetingId     String
+  kind          String // "executive" | "detailed_timeline"
+  content       String
+  keyPoints     String[]  @default([])
+  language      String?
+  modelName     String
+  generatedAt   DateTime  @default(now())
+  analysisRunId String?
+  editedAt      DateTime?
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
@@ -470,12 +516,19 @@ model Summary {
 }
 
 model Decision {
-  id              String   @id @default(uuid())
-  meetingId       String
-  text            String
-  sourceSegmentId String?
-  confidence      Float?
-  createdAt       DateTime @default(now())
+  id                 String        @id @default(uuid())
+  meetingId          String
+  text               String
+  sourceSegmentId    String?
+  confidence         Float?
+  createdAt          DateTime      @default(now())
+  /// Which analysis run produced it (null for user-created items).
+  analysisRunId      String?
+  origin             InsightOrigin @default(AI)
+  /// Set when a person edits the item; edited items survive regeneration.
+  editedAt           DateTime?
+  /// Transcript segments that support the item (the first is also sourceSegmentId).
+  evidenceSegmentIds String[]      @default([])
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
@@ -484,16 +537,23 @@ model Decision {
 }
 
 model ActionItem {
-  id              String    @id @default(uuid())
-  meetingId       String
-  text            String
-  ownerName       String?
-  ownerUserId     String?
-  dueDate         DateTime?
-  isDone          Boolean   @default(false)
-  sourceSegmentId String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                 String        @id @default(uuid())
+  meetingId          String
+  text               String
+  ownerName          String?
+  ownerUserId        String?
+  dueDate            DateTime?
+  isDone             Boolean       @default(false)
+  sourceSegmentId    String?
+  /// Which analysis run produced it (null for user-created items).
+  analysisRunId      String?
+  origin             InsightOrigin @default(AI)
+  /// Set when a person edits the item; edited items survive regeneration.
+  editedAt           DateTime?
+  /// Transcript segments that support the item (the first is also sourceSegmentId).
+  evidenceSegmentIds String[]      @default([])
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   meeting  Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   comments Comment[]
@@ -503,12 +563,19 @@ model ActionItem {
 }
 
 model Question {
-  id              String   @id @default(uuid())
-  meetingId       String
-  text            String
-  isResolved      Boolean  @default(false)
-  sourceSegmentId String?
-  createdAt       DateTime @default(now())
+  id                 String        @id @default(uuid())
+  meetingId          String
+  text               String
+  isResolved         Boolean       @default(false)
+  sourceSegmentId    String?
+  /// Which analysis run produced it (null for user-created items).
+  analysisRunId      String?
+  origin             InsightOrigin @default(AI)
+  /// Set when a person edits the item; edited items survive regeneration.
+  editedAt           DateTime?
+  /// Transcript segments that support the item (the first is also sourceSegmentId).
+  evidenceSegmentIds String[]      @default([])
+  createdAt          DateTime      @default(now())
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
@@ -517,12 +584,19 @@ model Question {
 }
 
 model Risk {
-  id              String   @id @default(uuid())
-  meetingId       String
-  text            String
-  severity        String? // "low" | "medium" | "high"
-  sourceSegmentId String?
-  createdAt       DateTime @default(now())
+  id                 String        @id @default(uuid())
+  meetingId          String
+  text               String
+  severity           String? // "low" | "medium" | "high"
+  sourceSegmentId    String?
+  /// Which analysis run produced it (null for user-created items).
+  analysisRunId      String?
+  origin             InsightOrigin @default(AI)
+  /// Set when a person edits the item; edited items survive regeneration.
+  editedAt           DateTime?
+  /// Transcript segments that support the item (the first is also sourceSegmentId).
+  evidenceSegmentIds String[]      @default([])
+  createdAt          DateTime      @default(now())
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
@@ -531,14 +605,21 @@ model Risk {
 }
 
 model Commitment {
-  id              String    @id @default(uuid())
-  meetingId       String
-  text            String
-  committedBy     String?
-  dueDate         DateTime?
-  isFulfilled     Boolean   @default(false)
-  sourceSegmentId String?
-  createdAt       DateTime  @default(now())
+  id                 String        @id @default(uuid())
+  meetingId          String
+  text               String
+  committedBy        String?
+  dueDate            DateTime?
+  isFulfilled        Boolean       @default(false)
+  sourceSegmentId    String?
+  /// Which analysis run produced it (null for user-created items).
+  analysisRunId      String?
+  origin             InsightOrigin @default(AI)
+  /// Set when a person edits the item; edited items survive regeneration.
+  editedAt           DateTime?
+  /// Transcript segments that support the item (the first is also sourceSegmentId).
+  evidenceSegmentIds String[]      @default([])
+  createdAt          DateTime      @default(now())
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
@@ -547,12 +628,13 @@ model Commitment {
 }
 
 model Topic {
-  id        String   @id @default(uuid())
-  meetingId String
-  title     String
-  startMs   Int
-  endMs     Int
-  createdAt DateTime @default(now())
+  id            String   @id @default(uuid())
+  meetingId     String
+  title         String
+  startMs       Int
+  endMs         Int
+  analysisRunId String?
+  createdAt     DateTime @default(now())
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 

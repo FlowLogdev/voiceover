@@ -28,6 +28,9 @@ import { TrackIngestion, TranscriptBus } from "./recording/track-ingestion.js";
 import { PrismaFileChunkStore } from "./recording/prisma-file-chunk-store.js";
 import { PrismaTranscriptStore, type TranscriptStore } from "./recording/transcript-store.js";
 import { meetingDetailRoutes } from "./routes/meeting-detail.js";
+import { insightRoutes } from "./routes/insights.js";
+import { askRoutes, type AskRateLimiter } from "./routes/ask.js";
+import { createLlmProvider, type LlmProvider } from "@voiceover/ai";
 import { LocalDiskObjectStore, type ObjectStore } from "@voiceover/storage";
 import type { ChunkStore } from "./recording/chunk-store.js";
 import { env } from "./env.js";
@@ -57,6 +60,9 @@ export interface BuildAppOptions {
   objectStore?: ObjectStore;
   /** Final transcript segments. Defaults to Postgres. */
   transcriptStore?: TranscriptStore;
+  /** Language model for Ask VoiceOver (meeting analysis runs in the worker). Defaults from LLM_PROVIDER. */
+  llm?: LlmProvider;
+  askRateLimiter?: AskRateLimiter;
   /** Who may upload to which browser-capture track. Defaults to the Prisma-backed ownership check. */
   uploadAuthorizer?: UploadAuthorizer;
 }
@@ -106,6 +112,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const objectStore = options.objectStore ?? new LocalDiskObjectStore(env.AUDIO_STORAGE_DIR);
   const chunkStore = options.chunkStore ?? new PrismaFileChunkStore(objectStore);
   const transcriptStore = options.transcriptStore ?? new PrismaTranscriptStore();
+  // Throws for an unknown LLM_PROVIDER at startup instead of silently using the test double.
+  const llm = options.llm ?? createLlmProvider({ provider: env.LLM_PROVIDER, model: env.LLM_MODEL, effort: env.LLM_EFFORT });
   // No real streaming ASR provider is selected/provisioned yet (see
   // ARCHITECTURE.md section 5) — this is a deterministic test double, not
   // real transcription. Swap behind the same AsrProvider interface once one is.
@@ -173,6 +181,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(botSessionRoutes, { manager: botSessionManager, provider: meetingBotProvider });
   await app.register(recordingSessionRoutes, { manager: botSessionManager, control: recordingControl });
   await app.register(meetingDetailRoutes, { objectStore });
+  await app.register(insightRoutes);
+  await app.register(askRoutes, { llm, rateLimiter: options.askRateLimiter });
 
   return app;
 }

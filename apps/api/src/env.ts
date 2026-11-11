@@ -17,6 +17,10 @@ const envSchema = z.object({
   AUDIO_STORAGE_DIR: z.string().default(DEFAULT_AUDIO_STORAGE_DIR),
   // Only "test-double" has an adapter so far; empty/unset means test-double.
   MEETING_BOT_PROVIDER: z.string().optional(),
+  // "anthropic" or unset/"test-double" (see @voiceover/ai createLlmProvider).
+  LLM_PROVIDER: z.string().optional(),
+  LLM_MODEL: z.string().optional(),
+  LLM_EFFORT: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
@@ -29,6 +33,9 @@ function computeEnv(): Env {
     APP_URL: process.env.APP_URL,
     AUDIO_STORAGE_DIR: process.env.AUDIO_STORAGE_DIR || undefined,
     MEETING_BOT_PROVIDER: process.env.MEETING_BOT_PROVIDER || undefined,
+    LLM_PROVIDER: process.env.LLM_PROVIDER || undefined,
+    LLM_MODEL: process.env.LLM_MODEL || undefined,
+    LLM_EFFORT: process.env.LLM_EFFORT || undefined,
   });
 }
 

@@ -11,6 +11,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
+    "@voiceover/ai": "workspace:*",
     "@voiceover/audio": "workspace:*",
     "@voiceover/database": "workspace:*",
     "@voiceover/storage": "workspace:*",

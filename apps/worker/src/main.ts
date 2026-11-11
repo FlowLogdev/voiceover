@@ -1,25 +1,37 @@
+import { createLlmProvider } from "@voiceover/ai";
 import { prisma } from "@voiceover/database";
 import { LocalDiskObjectStore } from "@voiceover/storage";
 import { env } from "./env.js";
+import { AnalysisRunner } from "./analysis-runner.js";
 import { RecordingFinalizer } from "./finalizer.js";
 
 /**
- * Worker process: finalizes ended recordings (see RecordingFinalizer). Safe to
- * run several copies; sessions are claimed with a lease in Postgres.
+ * Worker process: finalizes ended recordings (RecordingFinalizer), then runs
+ * the AI analyses they queue (AnalysisRunner). Safe to run several copies;
+ * jobs are claimed with leases in Postgres.
  */
 const finalizer = new RecordingFinalizer({ objectStore: new LocalDiskObjectStore(env.AUDIO_STORAGE_DIR) });
+// Throws at startup for an unknown LLM_PROVIDER rather than silently running the test double.
+const llm = createLlmProvider({ provider: env.LLM_PROVIDER, model: env.LLM_MODEL, effort: env.LLM_EFFORT });
+const analysis = new AnalysisRunner({ llm });
 
 let stopping = false;
 let wake: (() => void) | null = null;
 
 async function loop(): Promise<void> {
-  console.info(`Worker started; audio store at ${env.AUDIO_STORAGE_DIR}`);
+  console.info(`Worker started; audio store at ${env.AUDIO_STORAGE_DIR}; LLM provider ${llm.name}`);
   while (!stopping) {
-    try {
-      await finalizer.runOnce();
-    } catch (error) {
-      // e.g. the database is briefly unreachable: keep polling.
-      console.error("Finalization pass failed", error);
+    // Each pass is independent: a failure in one (e.g. the database briefly unreachable) doesn't skip the other.
+    for (const [name, pass] of [
+      ["Finalization", () => finalizer.runOnce()],
+      ["Analysis", () => analysis.runOnce()],
+    ] as const) {
+      if (stopping) break;
+      try {
+        await pass();
+      } catch (error) {
+        console.error(`${name} pass failed`, error);
+      }
     }
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, env.FINALIZE_POLL_MS);

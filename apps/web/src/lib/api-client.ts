@@ -13,6 +13,11 @@ import type {
   MeetingDetailDTO,
   MeetingTranscriptDTO,
   SpeakerDTO,
+  MeetingInsightsDTO,
+  InsightKind,
+  UpdateInsightRequest,
+  AskRequest,
+  AskResponse,
 } from "@voiceover/types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -97,6 +102,24 @@ export const api = {
   /** Same-site cookie auth: usable directly as an <audio> src. */
   playbackUrl: (organizationId: string, recordingTrackId: string) =>
     `${API_URL}/organizations/${organizationId}/recording-tracks/${recordingTrackId}/playback`,
+  getInsights: (organizationId: string, meetingId: string) =>
+    request<MeetingInsightsDTO>(`/organizations/${organizationId}/meetings/${meetingId}/insights`),
+  regenerateAnalysis: (organizationId: string, meetingId: string) =>
+    request<{ runId: string }>(`/organizations/${organizationId}/meetings/${meetingId}/analysis`, { method: "POST" }),
+  updateInsight: (organizationId: string, meetingId: string, kind: InsightKind, itemId: string, body: UpdateInsightRequest) =>
+    request<{ ok: true }>(`/organizations/${organizationId}/meetings/${meetingId}/insights/${kind}/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteInsight: (organizationId: string, meetingId: string, kind: InsightKind, itemId: string) =>
+    request<void>(`/organizations/${organizationId}/meetings/${meetingId}/insights/${kind}/${itemId}`, { method: "DELETE" }),
+  updateSummary: (organizationId: string, meetingId: string, content: string) =>
+    request<{ ok: true }>(`/organizations/${organizationId}/meetings/${meetingId}/summary`, {
+      method: "PATCH",
+      body: JSON.stringify({ content }),
+    }),
+  ask: (organizationId: string, body: AskRequest) =>
+    request<AskResponse>(`/organizations/${organizationId}/ask`, { method: "POST", body: JSON.stringify(body) }),
   revokeConsent: (organizationId: string, meetingId: string) =>
     request<RevokeConsentResponse>(`/organizations/${organizationId}/meetings/${meetingId}/consents/revoke`, {
       method: "POST",

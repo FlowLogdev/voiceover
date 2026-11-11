@@ -11,6 +11,7 @@ import {
 } from "@voiceover/types";
 import { api, ApiError } from "@/lib/api-client";
 import { MeetingRecording } from "./meeting-recording";
+import { MeetingInsights } from "./meeting-insights";
 
 const WS_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000").replace(/^http/, "ws");
 const ACTIVE: BotStatusDTO[] = ["SCHEDULED", "JOINING", "WAITING_ROOM", "IN_CALL"];
@@ -211,6 +212,14 @@ export default function MeetingPage() {
         <MeetingRecording
           organizationId={orgId}
           meetingId={meetingId}
+          refreshKey={botSessions.map((s) => `${s.id}:${s.status}`).join(",")}
+        />
+      )}
+      {orgId && (
+        <MeetingInsights
+          organizationId={orgId}
+          meetingId={meetingId}
+          canEdit={session?.organizations.find((o) => o.id === orgId)?.role !== "GUEST"}
           refreshKey={botSessions.map((s) => `${s.id}:${s.status}`).join(",")}
         />
       )}
