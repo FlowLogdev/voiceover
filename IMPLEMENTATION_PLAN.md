@@ -189,6 +189,11 @@ Closed two gaps in already-shipped code before connecting any real provider:
   speaker rename, the language timeline, and finalization progress.
 - Tests: 21 new unit tests (storage 5, assembly 6, language runs 2, persistence 2,
   Range 2, retry policy 2, plus updates); integration (CI only): 6 worker, 3 API.
+- Bug found by the new integration tests and fixed: chunks on one track were ingested
+  concurrently, so against real Postgres a slower save let chunk N+1 reach ASR before
+  chunk N (segment timing shifted by a chunk). Ingest is now serialised per track, with a
+  regression test using a store that saves later chunks faster. All of the above passed in
+  CI against real Postgres (run 42928231745).
 - **Not done**: real diarization (needs an ASR provider that returns speaker labels);
   waveform view; speaker -> participant linking; transcript editing (`TranscriptRevision`);
   S3 storage and signed playback URLs (Phase 10); resampling mixed-rate tracks.
