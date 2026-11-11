@@ -98,6 +98,13 @@ export class TrackIngestion {
   private readonly localListeners = new Set<(message: TranscriptMessage) => void>();
   /** Persistence is serialised per track so revisions of one segment land in order. */
   private persistence: Promise<void> = Promise.resolve();
+  /**
+   * Ingest is serialised per track: chunks reach ASR in the order they
+   * arrived. Without this, a slower store write for chunk N let chunk N+1
+   * reach ASR first (seen against real Postgres, where segment timing came
+   * out shifted by a chunk).
+   */
+  private ingestQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
     readonly recordingTrackId: string,
@@ -119,7 +126,13 @@ export class TrackIngestion {
    * ASR, so a caller can ack first and keep the wire order "ack, then any
    * transcript events that chunk produced".
    */
-  async ingest(frame: AudioChunkFrame, onStored?: () => void): Promise<IngestResult> {
+  ingest(frame: AudioChunkFrame, onStored?: () => void): Promise<IngestResult> {
+    const result = this.ingestQueue.then(() => this.ingestInOrder(frame, onStored));
+    this.ingestQueue = result.catch(() => {});
+    return result;
+  }
+
+  private async ingestInOrder(frame: AudioChunkFrame, onStored?: () => void): Promise<IngestResult> {
     if (this.finalized) return { ok: false, error: "Track ingestion already finalized" };
     if (!verifyChunkFrame(frame)) {
       return { ok: false, error: `Checksum mismatch for sequence ${frame.sequenceNumber}` };

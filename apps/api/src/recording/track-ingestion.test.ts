@@ -8,7 +8,7 @@ import {
 } from "@voiceover/meeting-bot";
 import { TestDoubleAsrProvider } from "@voiceover/transcription";
 import { BotIngestionSink } from "../meeting-bot/bot-audio-sink.js";
-import { InMemoryChunkStore } from "./chunk-store.js";
+import { InMemoryChunkStore, type ChunkStore } from "./chunk-store.js";
 import { TrackIngestion, TranscriptBus, type TranscriptMessage } from "./track-ingestion.js";
 import { InMemoryTranscriptStore, type FinalTranscript, type TranscriptStore } from "./transcript-store.js";
 import type { AsrEvent, AsrProvider, AsrSession } from "@voiceover/transcription";
@@ -74,6 +74,27 @@ describe("TrackIngestion", () => {
     expect(local.map((m) => m.type)).toEqual(["language.detected", "transcript.partial"]);
     expect(watched).toEqual(local);
     expect(otherTrack).toEqual([]);
+  });
+
+  it("feeds ASR in arrival order even when the store finishes saving chunks out of order", async () => {
+    const fed: number[] = [];
+    const asr: AsrProvider = {
+      name: "recording",
+      createSession: () => ({ onEvent: () => {}, pushAudio: (f) => fed.push(f.sequenceNumber), finalize: () => {} }),
+    };
+    // Chunk 0 takes longest to save, chunk 2 the shortest: like a real DB under load.
+    const delays = [30, 15, 0];
+    const slowStore: ChunkStore = {
+      saveChunk: async (_track, frame) => {
+        await new Promise((r) => setTimeout(r, delays[frame.sequenceNumber]));
+        return { alreadyStored: false };
+      },
+    };
+    const ingestion = new TrackIngestion("track-o", { chunkStore: slowStore, asrProvider: asr, transcriptBus: new TranscriptBus() });
+    const acks: number[] = [];
+    await Promise.all([0, 1, 2].map((n) => ingestion.ingest(loudFrame(n), () => acks.push(n))));
+    expect(fed).toEqual([0, 1, 2]);
+    expect(acks).toEqual([0, 1, 2]);
   });
 
   it("does not feed a replayed chunk to ASR a second time", async () => {
