@@ -224,7 +224,8 @@ Closed two gaps in already-shipped code before connecting any real provider:
 - **Web**: insights panel on the meeting page (evidence chips seek the player, inline
   edit, check-off, regenerate, run status); `/ask` page; removed the dashboard's stale
   "live recorder (test)" link, which used a client-made track id the server now refuses.
-- Tests: 12 `packages/ai` + 4 API unit tests; integration (CI only): 5 worker, 3 API.
+- Tests: 12 `packages/ai` + 4 API unit tests; integration: 5 worker, 3 API, all passing in CI
+  against real Postgres (run 42932248821).
 - **Not done / blocked**: a real Claude call (needs an API key); embeddings / semantic
   search (needs an embeddings provider); an org-level AI on/off switch and subprocessor
   paperwork; creating insights by hand (only edit/delete); a GIN index for full-text
